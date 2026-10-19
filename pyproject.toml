@@ -1,0 +1,47 @@
+[project]
+name = "mediaworker"
+version = "0.1.0"
+description = "Local and distributed media processing worker for ClapClip."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY.md"]
+authors = [{name = "ClapClip contributors"}]
+requires-python = ">=3.13"
+dependencies = [
+  "httpx>=0.27",
+  "pydantic>=2.6",
+  "python-dotenv>=1.0",
+  "pillow>=10.0",
+  "numpy>=1.26",
+  "opencv-python>=4.9",
+  "onnxruntime>=1.17; sys_platform != 'win32'",
+  "insightface>=2.0",
+  "pycognito>=2024.5.1",
+]
+
+[project.optional-dependencies]
+dev = ["build>=1.2", "pip-audit>=2.9"]
+downloader = ["yt-dlp[default]==2026.8.19"]
+windows-directml = ["onnxruntime-directml==1.22.0; sys_platform == 'win32'"]
+windows-cuda = [
+  "onnxruntime-gpu[cuda,cudnn]==1.24.4; sys_platform == 'win32'",
+  "nvidia-cudnn-cu12==9.10.2.21; sys_platform == 'win32'",
+]
+
+[project.scripts]
+mediaworker = "mediaworker.__main__:main"
+
+[project.urls]
+Repository = "https://github.com/ClapClip/clapclip-worker"
+Issues = "https://github.com/ClapClip/clapclip-worker/issues"
+Documentation = "https://github.com/ClapClip/clapclip-worker#readme"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["mediaworker*"]
+
+[tool.setuptools.package-data]
+mediaworker = ["web/*.html", "web/*.css", "web/*.js"]

@@ -1,0 +1,21 @@
+prune build
+prune dist
+prune logs
+prune work
+prune models
+prune uploads
+prune inputs
+prune outputs
+prune results
+prune .mediaworker
+prune .ssh
+prune .aws
+prune .venv*
+global-exclude .env .env.* node-token*.json *.log *.pem *.key *.pfx *.p12
+global-exclude *.onnx *.safetensors *.pth *.pt *.ckpt *.db *.sqlite *.sqlite3
+global-exclude id_rsa id_ed25519 *.pyc __pycache__
+global-exclude *.zip *.whl *.tar.gz *.tgz *.7z *.bundle
+include .env.example .env.local.example README.md SECURITY.md
+include LICENSE THIRD_PARTY.md CONTRIBUTING.md
+recursive-include docs *.md
+recursive-include scripts *.py *.ps1 *.sh

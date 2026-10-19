@@ -1,0 +1,18 @@
+# One Python 3.13 runtime for faceswap, cutout, enhance and download.
+# Install into a new environment; keep the old DirectML/CUDA environments intact.
+httpx==0.28.1
+pydantic==2.13.5
+python-dotenv==1.2.3
+pillow==12.3.0
+numpy==2.5.3
+opencv-python==5.0.0.93
+onnxruntime-directml==1.22.0
+pycognito==2024.5.1
+yt-dlp[default]==2026.8.19
+onnx==1.22.0
+scipy==1.18.1
+scikit-image==0.26.0
+tqdm==4.70.1
+requests==2.34.2
+# Then install insightface==2.0 with --no-deps: its onnxruntime dependency
+# must be provided by onnxruntime-directml, not overwritten by the CPU wheel.
