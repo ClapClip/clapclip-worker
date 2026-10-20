@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from mediaworker.downloader.egress import EgressProxy
 from mediaworker.downloader.safety import ServiceError, public_addresses, public_ip, validate_url
-from mediaworker.downloader.worker import Config, ProcessRunner, format_options
+from mediaworker.downloader.worker import Config, ProcessRunner, format_options, resolve_format_option
 
 VIDEO = "https://www.youtube.com/watch?v=publicvideo"
 
@@ -104,6 +104,78 @@ class FormatTests(unittest.TestCase):
         info = {"extractor": "generic", "formats": [{"format_id": "mp4", "ext": "mp4", "video_ext": "mp4", "protocol": "https", "vcodec": None}]}
         options = list(format_options(info).values())
         self.assertEqual(options, [])
+
+
+class SelectedFormatTests(unittest.TestCase):
+    def setUp(self):
+        self.info = source_info()
+        options = list(format_options(self.info).values())
+        self.video = next(option for option in options if option["components"] == ["137", "140"])
+        self.audio = next(option for option in options if option["audio"])
+
+    def test_same_resolution_reordering_does_not_invalidate_available_streams(self):
+        duplicate = dict(self.info["formats"][1], format_id="replacement")
+        refreshed = {**self.info, "formats": [duplicate, *self.info["formats"]]}
+        self.assertNotIn(self.video["components"], [o["components"] for o in format_options(refreshed).values()])
+        selected = resolve_format_option(refreshed, self.video)
+        self.assertEqual(selected["components"], ["137", "140"])
+        self.assertEqual(selected["component_video"], [True, False])
+
+    def test_better_audio_does_not_replace_the_original_video_or_mp3_selection(self):
+        refreshed = {**self.info, "formats": [*self.info["formats"],
+            dict(self.info["formats"][2], format_id="better-audio", abr=192)]}
+        menu = list(format_options(refreshed).values())
+        for option in (self.video, self.audio):
+            with self.subTest(audio=option["audio"]):
+                self.assertNotIn(option["components"], [o["components"] for o in menu])
+                self.assertEqual(resolve_format_option(refreshed, option)["components"], option["components"])
+
+    def test_display_limit_does_not_invalidate_a_lower_resolution_selection(self):
+        low = next(o for o in format_options(self.info).values() if o["components"] == ["18"])
+        higher = [dict(self.info["formats"][1], format_id=f"extra-{i}", width=1000, height=500+i*20)
+                  for i in range(8)]
+        refreshed = {**self.info, "formats": [*higher, *self.info["formats"]]}
+        self.assertNotIn(low["components"], [o["components"] for o in format_options(refreshed).values()])
+        self.assertEqual(resolve_format_option(refreshed, low)["components"], ["18"])
+
+    def test_revalidation_keeps_scaling_and_no_product_byte_cap(self):
+        self.info["duration"] = 900
+        self.info["formats"][1].update(width=3840, height=2160, filesize=2**40)
+        selected = resolve_format_option(self.info, self.video)
+        self.assertEqual((selected["public"]["width"], selected["public"]["height"]), (1280, 720))
+        self.assertEqual(selected["components"], ["137", "140"])
+        self.assertNotIn("filesize", selected["public"])
+
+    def test_missing_or_unsafe_selected_streams_are_rejected(self):
+        changes = [{"has_drm": True}, {"protocol": "rtmp"}, {"ext": "flv"},
+                   {"vcodec": "none"}, {"width": None}, {"height": True}, {"width": 1},
+                   {"format_id": "missing"}]
+        for change in changes:
+            refreshed = source_info()
+            refreshed["formats"][1].update(change)
+            with self.subTest(change=change), self.assertRaises(ServiceError) as failure:
+                resolve_format_option(refreshed, self.video)
+            self.assertEqual(failure.exception.code, "NO_FORMATS")
+        for change in ({"acodec": "none"}, {"has_drm": True}, {"protocol": "rtmp"},
+                       {"ext": "opus"}, {"vcodec": "h264"}):
+            refreshed = source_info()
+            refreshed["formats"][2].update(change)
+            with self.subTest(audio_change=change), self.assertRaises(ServiceError):
+                resolve_format_option(refreshed, self.video)
+
+    def test_malformed_options_and_wrong_output_types_are_rejected(self):
+        invalid = [None, {}, {**self.video, "components": "137"},
+                   {**self.video, "components": ["137", "137"]},
+                   {**self.video, "components": ["137;unsafe"]},
+                   {**self.video, "components": ["137", "140", "18"]},
+                   {**self.video, "components": ["140", "137"]},
+                   {**self.video, "audio": 0}, {**self.video, "public": {"ext": []}},
+                   {**self.video, "public": {"ext": "webm"}},
+                   {**self.video, "public": {"ext": "mp3"}},
+                   {**self.audio, "public": {"ext": "mp4"}}]
+        for option in invalid:
+            with self.subTest(option=option), self.assertRaises(ServiceError):
+                resolve_format_option(self.info, option)
 
 
 class ProcessTests(unittest.TestCase):
@@ -201,7 +273,12 @@ class LocalMediaTests(unittest.TestCase):
                     return ""
                 return super().run(args, directory, cancel, timeout, on_line, output_limit, failure_phase)
         runner = FixtureRunner(Config(), Proxy())
-        runner.inspect = lambda url, directory, cancel: source_info()
+        # Discovery preferences changed, but the previously selected streams
+        # still exist. Exercise actual merge/MP3 using that original selection.
+        refreshed = source_info()
+        refreshed["formats"].insert(0, dict(refreshed["formats"][1], format_id="new-video"))
+        refreshed["formats"].append(dict(refreshed["formats"][-1], format_id="new-audio", abr=192))
+        runner.inspect = lambda url, directory, cancel: refreshed
         available = list(format_options(source_info(), runner.config.max_width, runner.config.max_height).values())
         merge = next(option for option in available if option["components"] == ["137", "140"])
         mp3 = next(option for option in available if option["audio"])

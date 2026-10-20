@@ -62,7 +62,7 @@ def finite_number(value):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else None
 
 
-def format_options(info, max_width=1280, max_height=720):
+def _format_candidates(info):
     candidates = []
     for item in info.get("formats", []):
         if not isinstance(item, dict) or not FORMAT_ID.fullmatch(str(item.get("format_id", ""))):
@@ -80,6 +80,11 @@ def format_options(info, max_width=1280, max_height=720):
                    and item.get("acodec") is None and item.get("video_ext") in {"mp4", "webm"}
                    and item.get("protocol") in {"http", "https"})
         candidates.append({**item, "_audio": audio, "_video": video or unknown, "_unknown": unknown})
+    return candidates
+
+
+def format_options(info, max_width=1280, max_height=720):
+    candidates = _format_candidates(info)
     audios = sorted([item for item in candidates if item["_audio"]], key=lambda item: (not item["_video"], finite_number(item.get("abr")) or 0), reverse=True)
     options, seen = {}, set()
     def video_order(row):
@@ -139,6 +144,50 @@ def format_options(info, max_width=1280, max_height=720):
             "audio": True,
         }
     return options
+
+
+def resolve_format_option(info, option, max_width=1280, max_height=720):
+    """Revalidate the chosen streams, independently of the short display menu."""
+    def unavailable():
+        raise ServiceError("NO_FORMATS", "The selected format is no longer available.", 422)
+
+    if not isinstance(option, dict):
+        unavailable()
+    components, audio, public = option.get("components"), option.get("audio"), option.get("public")
+    if (not isinstance(components, list) or not 1 <= len(components) <= 2
+            or not all(isinstance(part, str) and FORMAT_ID.fullmatch(part) for part in components)
+            or len(set(components)) != len(components) or not isinstance(audio, bool)
+            or not isinstance(public, dict)):
+        unavailable()
+    ext = public.get("ext")
+    if not isinstance(ext, str) or ext not in ({"mp3"} if audio else {"mp4", "webm"}):
+        unavailable()
+    candidates = _format_candidates(info)
+    selected = []
+    for component in components:
+        candidate = next((row for row in candidates if row["format_id"] == component), None)
+        if candidate is None:
+            unavailable()
+        selected.append(candidate)
+    first = selected[0]
+    if audio:
+        if len(selected) != 1 or not first["_audio"]:
+            unavailable()
+    else:
+        width, height = finite_number(first.get("width")), finite_number(first.get("height"))
+        if (not first["_video"] or first["ext"] != ext or width is None or height is None
+                or min(width, height, max_width, max_height) < 2):
+            unavailable()
+        if len(selected) == 2:
+            track = selected[1]
+            compatible = track["ext"] == "m4a" if ext == "mp4" else track["ext"] in {"webm", "opus", "ogg"}
+            if first["_audio"] or first["_unknown"] or not track["_audio"] or track["_video"] or not compatible:
+                unavailable()
+        scale = min(1, max_width / width, max_height / height)
+        public = {**public, "width": max(2, int(width * scale) // 2 * 2),
+                  "height": max(2, int(height * scale) // 2 * 2)}
+    return {"public": public, "components": list(components), "audio": audio,
+            "component_video": [part["_video"] for part in selected]}
 
 
 def stop_process(process):
@@ -295,13 +344,7 @@ class ProcessRunner:
             raise ServiceError("DURATION_LIMIT", "The source duration could not be determined.", 422)
         if info.get("_type") in {"playlist", "multi_video"} or info.get("is_live") or info.get("live_status") in {"is_live", "is_upcoming"}:
             raise ServiceError("MEDIA_UNAVAILABLE", "Choose one public recorded video.", 422)
-        safe_options = format_options(info, self.config.max_width, self.config.max_height)
-        selected = next((candidate for candidate in safe_options.values()
-                         if candidate.get("components") == option.get("components") and
-                         candidate.get("audio") is option.get("audio")), None)
-        if selected is None:
-            raise ServiceError("NO_FORMATS", "The selected format no longer meets download limits.", 422)
-        option = selected
+        option = resolve_format_option(info, option, self.config.max_width, self.config.max_height)
         self.output_details = None
         self.proxy.allow_media()
         deadline = time.monotonic() + self.config.job_timeout
