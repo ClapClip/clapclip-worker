@@ -1,7 +1,11 @@
 [project]
 name = "mediaworker"
 version = "0.1.0"
-description = "Local and distributed media processing worker for ClapClip."
+description = "AI photo face swap, background removal, image enhancement, and video downloads with a local web UI or private distributed workers."
+keywords = [
+  "face-swap", "background-removal", "image-enhancement", "image-upscaling",
+  "video-downloader", "local-ai", "self-hosted", "distributed-worker", "onnx",
+]
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY.md"]
