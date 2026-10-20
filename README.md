@@ -6,6 +6,20 @@ The local workbench lets you upload images, choose a model, preview results, and
 
 [Local setup](#local-web-interface) · [Distributed deployment](#private-distributed-workers) · [Model licenses](THIRD_PARTY.md) · [Contributing](CONTRIBUTING.md)
 
+## ClapClip websites
+
+Explore the ClapClip desktop app and online media tools:
+
+| Website | Product |
+| --- | --- |
+| [clapclip.net](https://www.clapclip.net/) | ClapClip for Windows: local photo and video face swap, image enhancement, and other media tools. |
+| [faceswap.free](https://faceswap.free/) | Online photo face swap using a target photo and a source face. |
+| [cutout.free](https://cutout.free/) | Online image background removal and transparent PNG export. |
+| [enhance.place](https://enhance.place/) | Online AI image enhancement and photo upscaling. |
+| [clapclip.art](https://clapclip.art/) | Online video and audio downloads from supported public media links. |
+
+These are separate hosted products. Their processing, access, and retention policies are independent of the local workbench in this repository.
+
 ## What it does
 
 | Tool | Input and output | Details |

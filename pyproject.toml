@@ -36,6 +36,11 @@ windows-cuda = [
 mediaworker = "mediaworker.__main__:main"
 
 [project.urls]
+Homepage = "https://www.clapclip.net/"
+"Online Face Swap" = "https://faceswap.free/"
+"Background Removal" = "https://cutout.free/"
+"Image Enhancement" = "https://enhance.place/"
+"Video Downloader" = "https://clapclip.art/"
 Repository = "https://github.com/ClapClip/clapclip-worker"
 Issues = "https://github.com/ClapClip/clapclip-worker/issues"
 Documentation = "https://github.com/ClapClip/clapclip-worker#readme"
