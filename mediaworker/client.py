@@ -78,7 +78,9 @@ class WorkerClient:
     def _job_path(self, job_id: str, operation: str) -> str:
         return self._routes.job_path(job_id, operation)
 
-    async def claim(self, capabilities: list[str], models: list[str]) -> ClaimedJob | None:
+    async def claim(
+        self, capabilities: list[str], models: list[str], *, face_models: list[str] | None = None
+    ) -> ClaimedJob | None:
         path = self._routes.claim_path(capabilities)
         from .downloader.policy import DOWNLOAD_POLICY_VERSIONS
         data = await self._post(
@@ -88,6 +90,7 @@ class WorkerClient:
                 "capabilities": capabilities,
                 "trust_tier": self._cfg.trust_tier,
                 "models": models,
+                **({"faceModels": sorted(set(face_models or []))} if "enhance" in capabilities else {}),
                 **({"downloadPolicyVersions": list(DOWNLOAD_POLICY_VERSIONS)}
                    if capabilities and set(capabilities) == {"download"} else {}),
             },

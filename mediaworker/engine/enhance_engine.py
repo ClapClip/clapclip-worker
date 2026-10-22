@@ -222,6 +222,11 @@ class EnhanceEngine(Engine):
     def available_models(self) -> list[str]:
         return list(self._models) + (["portrait"] if self._faces else [])
 
+    @property
+    def available_face_models(self) -> list[str]:
+        """Only loaded restorers with a ready detector can accept face jobs."""
+        return sorted(self._faces) if self._detector is not None else []
+
     def load(self) -> None:
         if self._models or self._faces:
             return

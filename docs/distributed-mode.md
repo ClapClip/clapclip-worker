@@ -56,6 +56,16 @@ Python 3.13 环境安装 `pip install -e '.[downloader]'`，复制并填写 `.en
 
 `face=gfpgan`使用 `gfpgan_1.4.onnx`，`face=gpen`使用 `gpen_bfr_256.onnx`，均需检测模型；`model=portrait`必须启用face。增强输入为单帧JPEG/PNG/WebP，输出透明度保留、方向归正且移除元数据的PNG。4倍可由两次2倍推理实现。完整图片处理可直接使用本地工作台验证，无需领取队列任务。
 
+### 人像任务的领取声明
+
+包含 `enhance` 的 `POST /api/worker/claim` 请求额外发送 `faceModels: ["gfpgan", "gpen"]`，列表仅包含当前引擎成功加载、且检测器就绪的人脸修复模型；没有可用模型时显式发送 `[]`。它与原 `models` 并列，`models` 的内容和已有任务字段不变。下载及其他不含 `enhance` 的领取请求不携带此字段。
+
+服务端应把 `faceModels` 作为可选字符串数组接收；旧客户端缺失、空数组或未知值均不能证明指定人脸修复模型可用。分配 `params.face != "off"` 的增强任务时，除原有权限、能力、基础 `params.model` 匹配外，必须确认该次领取的 `faceModels` 包含所需的 `gfpgan` 或 `gpen`。不能仅凭 `models` 中的 `portrait` 分配 `standard + gfpgan`，也不能用历史节点记录替代当前领取声明。普通无脸部修复任务维持原调度。声明只描述就绪情况，不能提升节点授权。
+
+例如，整图增强加温和人像修复可使用 `params={"model":"standard","scale":2,"face":"gfpgan","faceStrength":0.5,"faceEdgeBlend":0.4,"faceFusionArea":50}`，并匹配 `models` 含 `standard` 且 `faceModels` 含 `gfpgan` 的领取请求。强度 `0.5` 是产品候选值，仍需真实视觉样本确认。
+
+现有 heartbeat 是单个已领取任务的租约续期，不是节点模型清单；它和 complete/fail 的字段、租约及 fencing 规则保持不变。服务端应先兼容可选 `faceModels` 并启用上述调度约束，再更新节点运行源，最后开放人像入口；旧节点仍可领取其他兼容任务。
+
 ## 配置与更新
 
 `.env.example`列出连接、模型、路径和限值配置。下载另外需要本地编码器，见[下载能力](download-queue.md)及[协议](download-policy.md)。换脸私有任务使用浏览器对齐的人脸裁剪，原生尺寸为Baseline 128×128、HyperSwap 256×256；检测及最终融合由前端完成。本地工作台则在本机完成整图检测和融合。

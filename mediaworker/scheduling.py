@@ -45,7 +45,12 @@ async def _worker_loop(
         capabilities = cfg.claim_capabilities or list(registry.keys())
     registry = {name: engine for name, engine in registry.items() if name in capabilities}
     models = sorted({model for engine in registry.values() for model in engine.available_models})
-    log.info("worker %d online (capabilities=%s)", idx, capabilities)
+    # Face restoration is an option on base enhance models too; "portrait"
+    # alone cannot prove that a particular restorer is ready on this poller.
+    claim_options = ({"face_models": list(getattr(registry.get("enhance"), "available_face_models", []))}
+                     if "enhance" in capabilities else {})
+    log.info("worker %d online (capabilities=%s, faceModels=%s)",
+             idx, capabilities, claim_options.get("face_models", []))
     failures = 0
     unavailable_since = 0.0
     endpoint = urlsplit(cfg.api_base_url).hostname or "unknown"
@@ -57,7 +62,7 @@ async def _worker_loop(
         delay = cfg.poll_interval_s
         try:
             try:
-                job = await client.claim(capabilities, models)
+                job = await client.claim(capabilities, models, **claim_options)
             except Exception as exc:
                 if failures == 0:
                     unavailable_since = time.monotonic()

@@ -70,7 +70,7 @@ class UnifiedRuntimeTests(unittest.TestCase):
             active = peak = active_download = peak_download = completed = 0
             issued = {'image': 0, 'download': 0}
 
-            async def claim(capabilities, models):
+            async def claim(capabilities, models, **_options):
                 kind = 'download' if capabilities == ['download'] else 'image'
                 limit = 1 if kind == 'download' else 3
                 if issued[kind] >= limit:
