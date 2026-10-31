@@ -38,7 +38,7 @@ class GifFaceSwap:
         padded = np.zeros((640, 640, 3), dtype=np.uint8)
         padded[:dh, :dw] = cv2.resize(bgr, (dw, dh))
         array = ((padded.astype(np.float32) - 127.5) / 128).transpose(2, 0, 1)[None]
-        prediction = np.asarray(self.detector.run(None,
+        prediction = np.asarray(self.engine._infer(self.detector.run, None,
             {self.input_name: np.ascontiguousarray(array, dtype=self.dtype)})[0])
         if prediction.ndim != 3 or prediction.shape[:2] != (1, 20) or not np.isfinite(prediction).all():
             raise ValueError("invalid GIF face detector output")
@@ -61,7 +61,7 @@ class GifFaceSwap:
         candidates = []
         for face in faces if reference is not None else faces[:1]:
             check_cancel(cancel)
-            self.engine._recognition.get(image, face)
+            self.engine._infer(self.engine._recognition.get, image, face)
             embedding = np.asarray(face.normed_embedding)
             if embedding.ndim != 1 or not np.isfinite(embedding).all() or np.linalg.norm(embedding) < .9:
                 raise ValueError("invalid GIF face identity")
@@ -102,7 +102,7 @@ class GifFaceSwap:
         points = arcface_dst.copy()
         points[:, 0] += 8
         source_face = Face(kps=points * (spec.size / 128))
-        self.engine._recognition.get(source_image, source_face)
+        self.engine._infer(self.engine._recognition.get, source_image, source_face)
         blur = _clip_setting(ctx.params.get("edgeBlur"), 0, 1, .4)
         area = int(round(_clip_setting(ctx.params.get("fusionArea"), 0, 50, 50)))
         output = ctx.workdir / "result.gif"

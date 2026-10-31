@@ -158,7 +158,14 @@ class FaceSwapEngine(Engine):
         self._models: dict[str, Any] = {}
         self._model_paths = _swap_model_paths(cfg)
         self._model_lock = threading.Lock()
+        self._inference_lock = threading.RLock()
         self._gif = None
+
+    def _infer(self, operation, *args, **kwargs):
+        # DirectML forbids simultaneous Run calls on the same session. Static
+        # crops and GIF frames share recognition/swap sessions across pollers.
+        with self._inference_lock:
+            return operation(*args, **kwargs)
 
     def load(self) -> None:
         installed = [key for key, path in self._model_paths.items() if path.is_file()]
@@ -270,7 +277,7 @@ class FaceSwapEngine(Engine):
         paste_back: bool,
     ) -> np.ndarray:
         model = self._get_model("inswapper_128")
-        fake, matrix = model.get(
+        fake, matrix = self._infer(model.get,
             image,
             target_face,
             source_face,
@@ -306,7 +313,7 @@ class FaceSwapEngine(Engine):
         rgb = (rgb - 0.5) / 0.5
         target = np.expand_dims(rgb.transpose(2, 0, 1), axis=0)
         source = source_face.normed_embedding.reshape(1, -1).astype(np.float32)
-        outputs = model.run(None, {"source": source, "target": target})
+        outputs = self._infer(model.run, None, {"source": source, "target": target})
         fake = np.clip(outputs[0][0].transpose(1, 2, 0), -1, 1)
         fake = ((fake + 1) * 127.5)[:, :, ::-1].astype(np.uint8)
         model_mask = np.clip(outputs[1][0, 0], 0, 1).astype(np.float32)
@@ -361,7 +368,7 @@ class FaceSwapEngine(Engine):
             bbox=np.array([0, 0, spec.size, spec.size]),
         )
         source_face = Face(kps=points.copy())
-        self._recognition.get(source, source_face)
+        self._infer(self._recognition.get, source, source_face)
         edge_blur = _clip_setting(ctx.params.get("edgeBlur"), 0, 1, 0.4)
         fusion_area = int(
             round(_clip_setting(ctx.params.get("fusionArea"), 0, 50, 50))

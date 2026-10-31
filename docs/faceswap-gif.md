@@ -63,6 +63,8 @@ lead over another candidate. Missing/ambiguous matches keep the frame unchanged.
 An animation with no swapped frames fails. This is a single-person workflow,
 not a guarantee of perfect tracking through occlusion; the UI explains skips.
 
+DirectML model calls are mutually exclusive across static and animated jobs;
+decoding and encoding can overlap, and host-wide three-slot scheduling is retained.
 Detection and blending reuse existing detector preprocessing, ArcFace and swap
 models. Cancellation is checked at compressed blocks, validation frames,
 identity candidates, swap boundaries and encoded chunks. Failed/cancelled

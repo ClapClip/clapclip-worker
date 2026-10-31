@@ -5,6 +5,8 @@ from dataclasses import replace
 from pathlib import Path
 import tempfile
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -205,6 +207,43 @@ class GifTests(unittest.TestCase):
             self.assertIsNone(engine._gif._select(image, identity, self.cancel)[0])
         with patch.object(engine._gif, "_faces", return_value=[first, first]):
             self.assertIsNone(engine._gif._select(image, identity, self.cancel)[0])
+
+    def test_mixed_static_and_gif_jobs_do_not_overlap_shared_model_calls(self):
+        from insightface.app.common import Face
+        engine, gif = self.engine(), self.context()
+        active = threading.Lock()
+
+        def operation():
+            if not active.acquire(blocking=False):
+                raise AssertionError("overlapping shared model session")
+            try:
+                time.sleep(.01)
+            finally:
+                active.release()
+
+        def recognize(_image, face):
+            operation()
+            face.embedding = np.ones(512, dtype=np.float32)
+
+        def swap(*args, **kwargs):
+            operation()
+            return np.full((128, 128, 3), 100, np.uint8), np.array([[1, 0, 0], [0, 1, 0]], np.float32)
+
+        engine._recognition.get.side_effect = recognize
+        model = Mock()
+        model.get.side_effect = swap
+        def faces(_image):
+            return [Face(kps=np.zeros((5, 2), np.float32), bbox=np.array([0, 0, 24, 20]))]
+        contexts = [gif]
+        for index in range(2):
+            folder = self.root / f"static-{index}"
+            folder.mkdir()
+            contexts.append(replace(gif, params={"mode": "face"}, workdir=folder,
+                                    inputs={"target": gif.inputs["source"], "source": gif.inputs["source"]}))
+        with patch.object(engine, "_get_model", return_value=model), \
+                patch.object(engine._gif, "_faces", side_effect=faces), ThreadPoolExecutor(max_workers=3) as pool:
+            results = list(pool.map(engine.run, contexts))
+        self.assertEqual([result.content_type for result in results], ["image/gif", "image/png", "image/png"])
 
     def test_media_advertisement_requires_loaded_models_and_detector(self):
         engine = FaceSwapEngine(self.cfg)
