@@ -33,6 +33,8 @@ flowchart LR
 
 `runner`仅组合服务；任务生命周期与槽调度分别由 `lifecycle` 和 `scheduling` 负责。本地图片验证使用工作台，CLI只保留 `local` 和 `run`。
 
+分布式动画换脸显式使用 `mode=gif` / `targetMedia=gif`，由 `faceswap_gif` 调用既有换脸与识别模型，`gif_media` 负责有界预检和流式编码。静态浏览器裁剪协议不变；声明门控、单人物匹配与预算见[GIF 契约](faceswap-gif.md)。
+
 ## 公共任务契约
 
 - `JobContext` 提供本地输入、params、attempt目录、cancel事件及progress回调。同步 `Engine.run()` 在线程中执行，返回 `RunResult(path,width,height,content_type)`。

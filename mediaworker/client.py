@@ -79,7 +79,8 @@ class WorkerClient:
         return self._routes.job_path(job_id, operation)
 
     async def claim(
-        self, capabilities: list[str], models: list[str], *, face_models: list[str] | None = None
+        self, capabilities: list[str], models: list[str], *, face_models: list[str] | None = None,
+        faceswap_media: list[str] | None = None
     ) -> ClaimedJob | None:
         path = self._routes.claim_path(capabilities)
         from .downloader.policy import DOWNLOAD_POLICY_VERSIONS
@@ -91,6 +92,8 @@ class WorkerClient:
                 "trust_tier": self._cfg.trust_tier,
                 "models": models,
                 **({"faceModels": sorted(set(face_models or []))} if "enhance" in capabilities else {}),
+                **({"faceswapMedia": sorted(set(faceswap_media))}
+                   if "faceswap" in capabilities and faceswap_media is not None else {}),
                 **({"downloadPolicyVersions": list(DOWNLOAD_POLICY_VERSIONS)}
                    if capabilities and set(capabilities) == {"download"} else {}),
             },

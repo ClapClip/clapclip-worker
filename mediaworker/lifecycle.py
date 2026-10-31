@@ -58,7 +58,9 @@ async def _process_job(
     lost = asyncio.Event()
     cancel = threading.Event()
     progress = [0]
-    heartbeat = asyncio.create_task(_heartbeat_loop(client, job, stop, lost, cancel, progress if job.task_type == "download" else None))
+    reports_progress = (job.task_type == "download" or
+                        job.task_type == "faceswap" and job.params.get("targetMedia") == "gif")
+    heartbeat = asyncio.create_task(_heartbeat_loop(client, job, stop, lost, cancel, progress if reports_progress else None))
     try:
         workdir.mkdir(parents=True, exist_ok=True)
         if engine is None:  # shouldn't happen: we only claim our capabilities

@@ -4,6 +4,9 @@ ClapClip Worker is an open source Python application for **photo face swap, back
 
 The local workbench lets you upload images, choose a model, preview results, and save the output in your browser. Distributed mode uses the same processing engines to handle jobs from your own backend.
 
+Distributed face swap also supports bounded animated GIF targets with explicit
+queue gating, identity matching and GIF output. See the [GIF contract](docs/faceswap-gif.md).
+
 [Local setup](#local-web-interface) · [Distributed deployment](#private-distributed-workers) · [Model licenses](THIRD_PARTY.md) · [Contributing](CONTRIBUTING.md)
 
 ## ClapClip websites

@@ -47,7 +47,9 @@ class LifecycleContractTests(unittest.IsolatedAsyncioTestCase):
         self.cfg.node_token = "offline"
 
     async def test_all_engine_results_use_the_same_fenced_lifecycle(self):
-        cases = [("faceswap", {}, "image/jpeg"), ("cutout", {}, "image/png"),
+        cases = [("faceswap", {}, "image/jpeg"),
+                 ("faceswap", {"mode": "gif", "targetMedia": "gif"}, "image/gif"),
+                 ("cutout", {}, "image/png"),
                  ("enhance", {}, "image/png"),
                  ("download", {"operation": "info"}, "application/json"),
                  ("download", {"operation": "download"}, "video/mp4")]

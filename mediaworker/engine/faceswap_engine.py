@@ -158,6 +158,7 @@ class FaceSwapEngine(Engine):
         self._models: dict[str, Any] = {}
         self._model_paths = _swap_model_paths(cfg)
         self._model_lock = threading.Lock()
+        self._gif = None
 
     def load(self) -> None:
         installed = [key for key, path in self._model_paths.items() if path.is_file()]
@@ -196,6 +197,20 @@ class FaceSwapEngine(Engine):
                 log.exception("swap model unavailable: %s", key)
         if not self._models:
             raise RuntimeError("no swap models could be loaded")
+        from .faceswap_gif import GifFaceSwap
+        try:
+            animated = GifFaceSwap(self._cfg, self)
+            animated.load()
+            self._gif = animated
+            log.info("faceswap GIF ready: primary identity, bounded streaming encoder")
+        except Exception:
+            log.exception("faceswap GIF unavailable; static face crops remain available")
+
+    @property
+    def available_media(self) -> list[str]:
+        if not self._models or self._recognition is None:
+            return []
+        return ["image", "gif"] if self._gif is not None else ["image"]
 
     @property
     def available_models(self) -> list[str]:
@@ -306,6 +321,10 @@ class FaceSwapEngine(Engine):
         source_path = ctx.inputs.get("source")
         if not target_path or not source_path:
             raise ValueError("faceswap requires 'target' and 'source' inputs")
+        if ctx.params.get("mode") == "gif" or ctx.params.get("targetMedia") == "gif":
+            if self._gif is None:
+                raise RuntimeError("GIF face swap is not ready on this worker")
+            return self._gif.run(ctx)
 
         validate_image(target_path, self._cfg)
         validate_image(source_path, self._cfg)

@@ -49,8 +49,11 @@ async def _worker_loop(
     # alone cannot prove that a particular restorer is ready on this poller.
     claim_options = ({"face_models": list(getattr(registry.get("enhance"), "available_face_models", []))}
                      if "enhance" in capabilities else {})
-    log.info("worker %d online (capabilities=%s, faceModels=%s)",
-             idx, capabilities, claim_options.get("face_models", []))
+    media = getattr(registry.get("faceswap"), "available_media", None)
+    if "faceswap" in capabilities and media is not None:
+        claim_options["faceswap_media"] = list(media)
+    log.info("worker %d online (capabilities=%s, faceModels=%s, faceswapMedia=%s)",
+             idx, capabilities, claim_options.get("face_models", []), claim_options.get("faceswap_media", []))
     failures = 0
     unavailable_since = 0.0
     endpoint = urlsplit(cfg.api_base_url).hostname or "unknown"
