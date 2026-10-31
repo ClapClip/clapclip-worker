@@ -186,6 +186,12 @@ class GifTests(unittest.TestCase):
         self.assertEqual(swap.call_count, 1)
         self.assertFalse((self.root / "result.gif").exists())
 
+    def test_unknown_protocol_or_output_cannot_use_gif_adapter(self):
+        engine, ctx = self.engine(), self.context()
+        for options in ({"gifProtocol": 2}, {"gifProtocol": True}, {"outputFormat": "png"}):
+            with self.subTest(options=options), self.assertRaisesRegex(ValueError, "gifProtocol"):
+                engine.run(replace(ctx, params={**ctx.params, **options}))
+
     def test_primary_identity_does_not_follow_a_different_larger_face(self):
         engine = self.engine()
         identity = np.array([1., 0.])

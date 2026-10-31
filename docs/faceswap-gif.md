@@ -6,6 +6,8 @@ They require **both** `params.mode = "gif"` and `params.targetMedia = "gif"`.
 browser-aligned face crop at the selected model's native 128 or 256 square size.
 `model`, `edgeBlur` and `fusionArea` retain their meanings. Client frame counts,
 dimensions and duration hints are never trusted.
+The website sends `gifProtocol=1` and `outputFormat="gif"`; those are also the
+defaults when absent. Other protocol versions or output formats are rejected.
 
 Normal `mode="face"` still accepts only aligned static JPEG/PNG/WebP crops and
 returns transparent PNG. It rejects GIF rather than decoding frame zero. The

@@ -82,6 +82,9 @@ class GifFaceSwap:
         ctx = replace(ctx, cancel=GifDeadline(ctx.cancel))
         if ctx.params.get("mode") != "gif" or ctx.params.get("targetMedia") != "gif":
             raise ValueError("GIF requires mode='gif' and targetMedia='gif'")
+        protocol = ctx.params.get("gifProtocol", 1)
+        if type(protocol) is not int or protocol != 1 or ctx.params.get("outputFormat", "gif") != "gif":
+            raise ValueError("GIF requires gifProtocol=1 and outputFormat='gif'")
         if ctx.params.get("faceSelection", "primary") != "primary":
             raise ValueError("GIF supports faceSelection='primary' only")
         model_key = str(ctx.params.get("model") or "inswapper_128")
