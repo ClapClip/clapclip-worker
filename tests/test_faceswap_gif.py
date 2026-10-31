@@ -140,6 +140,7 @@ class GifTests(unittest.TestCase):
             try:
                 with self.assertRaises((ValueError, RuntimeError)):
                     writer.append(Image.new("RGBA", (8, 8), "red"), 40)
+                    writer.close(True)
             finally:
                 writer.close()
             self.assertFalse(path.exists())

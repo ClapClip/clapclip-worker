@@ -58,19 +58,20 @@ async def _process_job(
     lost = asyncio.Event()
     cancel = threading.Event()
     progress = [0]
-    reports_progress = (job.task_type == "download" or
-                        job.task_type == "faceswap" and job.params.get("targetMedia") == "gif")
+    is_gif = job.task_type == "faceswap" and job.params.get("targetMedia") == "gif"
+    reports_progress = job.task_type == "download" or is_gif
     heartbeat = asyncio.create_task(_heartbeat_loop(client, job, stop, lost, cancel, progress if reports_progress else None))
+    transfer = None
     try:
         workdir.mkdir(parents=True, exist_ok=True)
         if engine is None:  # shouldn't happen: we only claim our capabilities
             raise RuntimeError(f"no engine for task_type {job.task_type!r}")
 
-        inputs = {}
-        for name, url in job.inputs.items():
-            if name in ("", ".", "..") or "/" in name or "\\" in name or ":" in name:
-                raise ValueError("invalid input name")
-            inputs[name] = await storage.download(url, workdir / name, cfg.max_image_bytes)
+        phase = time.perf_counter()
+        if is_gif:
+            transfer = storage.transfer_client()
+        inputs = await _download_inputs(job.inputs, workdir, cfg.max_image_bytes, transfer)
+        download_seconds = time.perf_counter() - phase
 
         ctx = JobContext(
             job_id=job.id,
@@ -82,6 +83,7 @@ async def _process_job(
             progress=lambda _status, percent: progress.__setitem__(0, min(99, max(0, int(percent)))),
         )
         # Engines are CPU/GPU-bound and synchronous: run off the event loop.
+        phase = time.perf_counter()
         inference = asyncio.create_task(asyncio.to_thread(engine.run, ctx))
         try:
             result = await asyncio.shield(inference)
@@ -92,6 +94,7 @@ async def _process_job(
             with suppress(Exception):
                 await inference
             raise
+        process_seconds = time.perf_counter() - phase
         if lost.is_set():
             raise LeaseLost("lease expired during processing")
         # Confirm ownership immediately before upload, even after a missed beat.
@@ -109,10 +112,20 @@ async def _process_job(
                 raise RuntimeError("INVALID_LIMITS") from None
         elif output_limit < 1:
             raise RuntimeError("INVALID_LIMITS")
-        await storage.upload(job.result.put_url, result.output_path, result.content_type, output_limit)
+        output_bytes = result.output_path.stat().st_size if is_gif else 0
+        phase = time.perf_counter()
+        options = {"client": transfer} if transfer is not None else {}
+        await storage.upload(job.result.put_url, result.output_path, result.content_type, output_limit, **options)
+        upload_seconds = time.perf_counter() - phase
         extra = {"duration": result.duration} if job.task_type == "download" and result.duration is not None else {}
+        phase = time.perf_counter()
         await client.complete(job.id, job.lease_token, job.result.key, result.width, result.height, **extra)
-        log.info("job %s done (%dx%d)", job.id, result.width, result.height)
+        # Observability must never send fail after an accepted terminal ACK.
+        with suppress(Exception):
+            if is_gif:
+                log.info("job %s GIF timings download=%.3fs process=%.3fs upload=%.3fs complete=%.3fs result_bytes=%d",
+                         job.id, download_seconds, process_seconds, upload_seconds, time.perf_counter() - phase, output_bytes)
+            log.info("job %s done (%dx%d)", job.id, result.width, result.height)
     except LeaseLost:
         log.warning("job %s discarded after lease loss", job.id)
     except Exception as exc:
@@ -131,6 +144,29 @@ async def _process_job(
         heartbeat.cancel()
         with suppress(asyncio.CancelledError, Exception):
             await heartbeat
+        if transfer is not None:
+            with suppress(Exception):
+                await transfer.aclose()
         shutil.rmtree(workdir, ignore_errors=True)
         with suppress(OSError):
             workdir.parent.rmdir()
+
+
+async def _download_inputs(urls, workdir, max_bytes, transfer):
+    for name in urls:
+        if name in ("", ".", "..") or "/" in name or "\\" in name or ":" in name:
+            raise ValueError("invalid input name")
+    if transfer is None:
+        return {name: await storage.download(url, workdir / name, max_bytes) for name, url in urls.items()}
+    pending = [asyncio.create_task(storage.download(url, workdir / name, max_bytes, client=transfer))
+               for name, url in urls.items()]
+    try:
+        paths = await asyncio.gather(*pending)
+        return dict(zip(urls, paths))
+    finally:
+        # gather does not cancel siblings on error. Stop and await every writer
+        # before the attempt's directory or anonymous connection pool is closed.
+        for task in pending:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)

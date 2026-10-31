@@ -48,11 +48,16 @@ and structure before any raster decode or inference. Every frame is decoded once
 to reject corruption before GPU work. Unknown rendering extensions, out-of-canvas
 rectangles, truncation and trailing data fail.
 
-Pillow composites source disposal and transparency. Output uses independently
-quantized full-canvas frames with clear-to-transparent disposal, retaining order
-even for identical consecutive frames. GIF binary alpha is retained; opaque
-colours use at most 255 palette entries plus a reserved transparency index. The
-encoder keeps one frame, not an animation-wide pixel list. Metadata is omitted.
+Pillow composites source disposal and transparency. Each full display frame is
+quantized with the same 255-colour policy as before. A bounded one-frame lookahead
+then encodes only changed opaque pixels using transparent deltas, choosing a full
+frame when its compressed representation is smaller. This changes compressed
+bytes, not decoded RGBA pixels. Identical frames still have separate frame records
+and delays. Transparent frames and their predecessors use full-canvas clearing;
+the final frame also clears before a transparent first frame loops, avoiding ghosts.
+GIF binary alpha, palette precision, dimensions, delays and loop semantics remain
+unchanged. Only a pending frame and previous display state are retained, never an
+animation-wide pixel list. Metadata is omitted.
 
 ## Face selection and lifecycle
 
@@ -78,3 +83,12 @@ for input/output transfer. Hardware and contention affect processing time.
 Per-frame progress uses the existing heartbeat progress field for GIF tasks.
 Lease intervals, fencing, pre-upload ownership confirmation, bounded upload and
 terminal cleanup are unchanged. No separate process, queue or extra claim is used.
+
+GIF input downloads overlap through a per-attempt anonymous HTTP pool, limited to
+two connections. Upload can reuse that pool (keepalive up to 120 seconds). It
+never inherits the authenticated queue client, is not shared across attempts,
+and closes on success, failure or cancellation. Failed input downloads cancel
+and await sibling writers before cleanup. Existing per-request timeouts, byte
+limits and upload retry rules remain intact. Other task types keep their previous
+transfer path. Successful GIF jobs log download/process/upload/complete timings
+and output byte count; observation failures cannot alter an accepted terminal ACK.

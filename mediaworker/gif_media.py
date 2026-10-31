@@ -1,12 +1,11 @@
-"""Bounded GIF inspection and streaming full-frame encoding, without queue I/O."""
+"""Bounded GIF inspection and pixel-exact streaming encoding, without queue I/O."""
 from dataclasses import dataclass
 from pathlib import Path
 import struct
 import time
 import warnings
 
-import numpy as np
-from PIL import Image, GifImagePlugin
+from PIL import Image, ImageChops, GifImagePlugin
 
 
 GIF_LIMITS = {"maxBytes": 6 * 1024 * 1024, "maxDimension": 1024,
@@ -151,11 +150,14 @@ def inspect_gif(path: Path, cfg, cancel) -> GifInfo:
 
 
 class GifWriter:
-    """One quantized frame in memory; no save_all frame list or delta frames."""
+    """Bounded lookahead: preserve every quantized display frame, encode changes."""
     def __init__(self, path, info, limit, cancel):
         self.path, self.info, self.limit, self.cancel = path, info, limit, cancel
         self.file = path.open("wb")
         self.count = 0
+        self._pending = None
+        self._previous_rgb = None
+        self._first_transparent = False
 
     def _write(self, chunks):
         for chunk in chunks:
@@ -169,22 +171,63 @@ class GifWriter:
         frame = rgba.convert("RGB").quantize(colors=255, dither=Image.Dither.NONE)
         palette = frame.getpalette()
         frame.putpalette(palette[:765] + [0] * (768 - len(palette[:765])))
-        alpha = np.asarray(rgba.getchannel("A"))
-        frame.paste(255, mask=Image.fromarray(np.where(alpha < 128, 255, 0).astype(np.uint8)))
+        alpha = rgba.getchannel("A")
+        frame.paste(255, mask=alpha.point([255] * 128 + [0] * 128))
         frame.info.clear()
+        transparent = alpha.getextrema()[0] < 128
+        if self._pending is not None:
+            self._flush(transparent)
+        else:
+            self._first_transparent = transparent
+        self._pending = (frame, duration, transparent)
+
+    def _flush(self, next_transparent):
+        frame, duration, transparent = self._pending
+        # A frame before transparency must clear the FULL canvas, not merely a
+        # delta rectangle. One-frame lookahead permits this without ghosting.
+        clear = transparent or next_transparent
+        rgb = frame.convert("RGB") if not transparent else None
+        encoded, offset, local_palette = frame, (0, 0), True
+        if not clear and self._previous_rgb is not None:
+            difference = ImageChops.difference(rgb, self._previous_rgb)
+            bbox = difference.getbbox()
+            if bbox is None:
+                # Retain a real frame and its own delay, even when unchanged.
+                encoded = frame.crop((0, 0, 1, 1))
+                encoded.paste(255, (0, 0, 1, 1))
+                local_palette = False  # Only global transparency index 255 is used.
+            else:
+                encoded = frame.crop(bbox)
+                red, green, blue = difference.crop(bbox).split()
+                unchanged = ImageChops.lighter(ImageChops.lighter(red, green), blue).point([255] + [0] * 255)
+                encoded.paste(255, mask=unchanged)
+                offset = bbox[:2]
         if self.count == 0:
             options = {"background": 255, "transparency": 255, "optimize": False}
             if self.info.loop is not None:
                 options["loop"] = self.info.loop
             self._write(GifImagePlugin.getheader(frame, info=options)[0])
-        # Full canvas + clear-to-transparent disposal avoids old-position ghosts.
-        self._write(GifImagePlugin.getdata(frame, duration=duration, disposal=2,
-                    transparency=255, include_color_table=True))
+        chunks = GifImagePlugin.getdata(encoded, offset=offset, duration=duration, disposal=2 if clear else 1,
+                                       transparency=255, include_color_table=local_palette)
+        if encoded is not frame and local_palette:
+            # High-motion or noisy frames may compress better without a sparse
+            # transparent delta. Never expand output just to use a delta frame.
+            full = GifImagePlugin.getdata(frame, duration=duration, disposal=1,
+                                         transparency=255, include_color_table=True)
+            if sum(map(len, full)) < sum(map(len, chunks)):
+                chunks = full
+        self._write(chunks)
         self.count += 1
+        self._previous_rgb = None if clear else rgb
+        self._pending = None
 
     def close(self, success=False):
         try:
             if success:
+                if self._pending is not None:
+                    # Clear the final full frame before a transparent first
+                    # frame is replayed in a finite or infinite loop.
+                    self._flush(self._first_transparent)
                 self._write([b";"])
         except BaseException:
             success = False

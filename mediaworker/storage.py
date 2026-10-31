@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import asyncio
+from contextlib import asynccontextmanager
 
 import httpx
 
@@ -12,11 +13,29 @@ _DOWNLOAD_TIMEOUT = httpx.Timeout(60.0)
 _UPLOAD_TIMEOUT = httpx.Timeout(120.0)
 
 
-async def download(url: str, dest: Path, max_bytes: int = 6 * 1024 * 1024) -> Path:
+def transfer_client() -> httpx.AsyncClient:
+    """Anonymous, attempt-local pool; never reuse the authenticated queue client."""
+    return httpx.AsyncClient(timeout=_UPLOAD_TIMEOUT,
+                             limits=httpx.Limits(max_connections=2, max_keepalive_connections=2,
+                                                keepalive_expiry=120))
+
+
+@asynccontextmanager
+async def _client_or_owned(client, timeout):
+    if client is not None:
+        yield client
+    else:
+        async with httpx.AsyncClient(timeout=timeout) as owned:
+            yield owned
+
+
+async def download(url: str, dest: Path, max_bytes: int = 6 * 1024 * 1024,
+                   *, client: httpx.AsyncClient | None = None) -> Path:
     """Stream a presigned GET URL to a local file."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    async with httpx.AsyncClient(timeout=_DOWNLOAD_TIMEOUT) as client:
-        async with client.stream("GET", url) as resp:
+    options = {"timeout": _DOWNLOAD_TIMEOUT} if client is not None else {}
+    async with _client_or_owned(client, _DOWNLOAD_TIMEOUT) as http:
+        async with http.stream("GET", url, **options) as resp:
             resp.raise_for_status()
             if int(resp.headers.get("Content-Length", "0")) > max_bytes:
                 raise ValueError("download exceeds byte limit")
@@ -30,7 +49,8 @@ async def download(url: str, dest: Path, max_bytes: int = 6 * 1024 * 1024) -> Pa
     return dest
 
 
-async def upload(put_url: str, src: Path, content_type: str = "application/octet-stream", max_bytes: int | None = 32 * 1024 * 1024) -> None:
+async def upload(put_url: str, src: Path, content_type: str = "application/octet-stream", max_bytes: int | None = 32 * 1024 * 1024,
+                 *, client: httpx.AsyncClient | None = None) -> None:
     """PUT a local file to a presigned S3 URL."""
     if src.stat().st_size <= 0 or (max_bytes is not None and src.stat().st_size > max_bytes):
         raise ValueError("result exceeds byte limit")
@@ -49,11 +69,12 @@ async def upload(put_url: str, src: Path, content_type: str = "application/octet
                 yield chunk
             if sent != size:
                 raise ValueError("result changed during upload")
-    async with httpx.AsyncClient(timeout=_UPLOAD_TIMEOUT) as client:
+    options = {"timeout": _UPLOAD_TIMEOUT} if client is not None else {}
+    async with _client_or_owned(client, _UPLOAD_TIMEOUT) as http:
         for attempt in range(3):
             try:
-                resp = await client.put(
-                    put_url, content=chunks(), headers={"Content-Type": content_type, "Content-Length": str(size)}
+                resp = await http.put(
+                    put_url, content=chunks(), headers={"Content-Type": content_type, "Content-Length": str(size)}, **options
                 )
                 resp.raise_for_status()
                 return
