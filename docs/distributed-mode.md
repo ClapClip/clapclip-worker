@@ -40,7 +40,9 @@ Get-ScheduledTask -TaskName MediaWorker
 
 ## macOS / Linux
 
-Python 3.13 环境安装 `pip install -e '.[downloader]'`，复制并填写 `.env` 后运行 `python -m mediaworker run --all-capabilities`。只在 `CAPABILITIES` 启用本机支持且装齐模型的能力；macOS目前不支持增强引擎。macOS可使用 `bash scripts/install-mac.sh` 安装登录后常驻服务，`bash scripts/uninstall-mac.sh` 移除该服务。Linux使用自己的服务管理器管理同一入口。
+Python 3.13 环境安装 `pip install -e '.[downloader]'`，复制并填写 `.env` 后运行 `python -m mediaworker run --all-capabilities`。只在 `CAPABILITIES` 启用本机支持且装齐模型的能力；macOS目前不支持增强引擎。macOS可使用 `bash scripts/install-mac.sh` 安装登录后常驻服务，`bash scripts/uninstall-mac.sh` 移除该服务。
+
+Linux CUDA 节点改用 `requirements-unified-linux-cuda.txt`（`onnxruntime-gpu[cuda,cudnn]==1.24.4`），并按其中说明用 `--no-deps` 安装本包和 InsightFace，避免 CPU 版 `onnxruntime` 盖住 GPU 包。需要 NVIDIA 驱动、CUDA 12.8+ 和 cuDNN 9。增强必须有 GPU；换脸和抠图可回退 CPU。模型默认在运行账户的 `~/.mediaworker/models`。常驻使用 `deploy/linux/mediaworker.service`（`bash deploy/linux/install.sh` 只安装，不启动），不要用 Windows 监督器。可选 `HEALTH_FILE` 在每次成功轮询后更新，留空则关闭。
 
 ## 增强模型
 

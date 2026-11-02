@@ -1,8 +1,10 @@
-import unittest
+import os
 from pathlib import Path
+import subprocess
 import threading
+import unittest
 from unittest.mock import Mock, patch
-from mediaworker.supervisor import process_roots, supervise
+from mediaworker.supervisor import process_roots, snapshot, supervise
 
 
 class SupervisorInventoryTests(unittest.TestCase):
@@ -62,6 +64,25 @@ class SupervisorInventoryTests(unittest.TestCase):
             supervise('run', Path('unused'), Path('unused'), Path('.'), stop)
         self.assertEqual(inventory.call_count, 2)
         self.assertEqual(start.call_count, 2)
+        self.assertEqual(
+            start.call_args.kwargs["creationflags"],
+            getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+
+    @unittest.skipUnless(os.name == "nt", "CREATE_NO_WINDOW exists only on Windows")
+    def test_windows_create_no_window_flag_is_preserved(self):
+        from mediaworker.supervisor import _CREATE_NO_WINDOW
+
+        self.assertEqual(_CREATE_NO_WINDOW, subprocess.CREATE_NO_WINDOW)
+        self.assertNotEqual(_CREATE_NO_WINDOW, 0)
+
+    @unittest.skipUnless(os.name != "nt", "asserts the non-Windows inventory guard")
+    def test_process_inventory_is_not_attempted_off_windows(self):
+        with self.assertRaises(OSError):
+            snapshot("run", Path("unused"))
+        with self.assertRaises(OSError):
+            from mediaworker.supervisor import wait_for_existing
+            wait_for_existing(self.row(1, 0), threading.Event())
 
 
 if __name__ == "__main__":

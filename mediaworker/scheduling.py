@@ -24,6 +24,18 @@ def _claim_retry_delay(poll_interval_s: float, failures: int) -> float:
     return base * random.uniform(0.8, 1.0)
 
 
+def _touch_health_file(cfg: Config) -> None:
+    """Record a successful poll for an external monitor. Unset means do nothing."""
+    path = cfg.health_file
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    except OSError as exc:
+        log.warning("health file update failed (%s)", type(exc).__name__)
+
+
 def _claim_error_summary(exc: Exception) -> str:
     # Exception messages may be empty (HTTPX timeouts) or contain credentials,
     # signed URLs or response bodies. The type/status are safe and actionable.
@@ -83,6 +95,7 @@ async def _worker_loop(
                         idx, endpoint, failures, time.monotonic() - unavailable_since,
                     )
                     failures = 0
+                _touch_health_file(cfg)
                 if job is not None:
                     # Finish the attempt before releasing its host-wide slot.
                     try:

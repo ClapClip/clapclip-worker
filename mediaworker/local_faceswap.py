@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
-from .engine.base import Engine, RunResult
+from .engine.base import Engine, RunResult, warn_if_cpu_fallback
 from .engine.faceswap_engine import FaceSwapEngine, SWAP_MODELS, _box_mask, _paste_face
 from .engine.enhance_portrait import _face_indices
 from .images import validate_image
@@ -35,6 +35,7 @@ class LocalFaceSwap(Engine):
         from .engine.base import resolve_providers, session_options
         providers = resolve_providers(self.cfg.onnx_providers)
         self.detector = ort.InferenceSession(str(self.cfg.enhance_models_dir / "yoloface_8n.onnx"), sess_options=session_options(providers), providers=providers)
+        warn_if_cpu_fallback(self.detector, providers, "local face detector")
         self.input_name = self.detector.get_inputs()[0].name
         self.dtype = np.float16 if self.detector.get_inputs()[0].type == "tensor(float16)" else np.float32
         self.engine.load()

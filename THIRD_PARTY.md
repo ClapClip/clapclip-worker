@@ -9,7 +9,8 @@ user media or production credentials are included in our source distribution.
 
 Dependencies are installed separately and retain their own notices. The declared
 packages are in `pyproject.toml`; the tested Windows DirectML pins are in
-`requirements-unified-windows.txt`. Do not treat this project's MIT license as
+`requirements-unified-windows.txt`, and the Linux CUDA pins are in
+`requirements-unified-linux-cuda.txt`. Do not treat this project's MIT license as
 permission to redistribute a complete Python environment.
 
 - [InsightFace](https://github.com/deepinsight/insightface): SDK source is MIT;

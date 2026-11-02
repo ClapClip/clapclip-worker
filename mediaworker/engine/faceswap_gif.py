@@ -6,7 +6,7 @@ from PIL import Image
 
 from ..gif_media import GIF_LIMITS, GifDeadline, GifWriter, check_cancel, inspect_gif
 from ..images import validate_image
-from .base import RunResult, resolve_providers, session_options
+from .base import RunResult, resolve_providers, session_options, warn_if_cpu_fallback
 from .enhance_portrait import _face_indices
 
 
@@ -20,6 +20,7 @@ class GifFaceSwap:
         self.detector = ort.InferenceSession(
             str(self.cfg.enhance_models_dir / "yoloface_8n.onnx"),
             providers=providers, sess_options=session_options(providers))
+        warn_if_cpu_fallback(self.detector, providers, "faceswap gif detector")
         inputs = self.detector.get_inputs()
         if len(inputs) != 1 or tuple(inputs[0].shape) != (1, 3, 640, 640):
             raise ValueError("invalid GIF face detector input")

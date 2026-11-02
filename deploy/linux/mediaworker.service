@@ -1,0 +1,27 @@
+# Outbound node only: this unit does not listen on any port.
+# Exit 75 is the auto-updater restart code. SIGTERM lets in-flight jobs drain
+# inside TimeoutStopSec, which is longer than the 150s job deadline.
+# install.sh replaces @PREFIX@ with the checkout path. It does not start the unit.
+
+[Unit]
+Description=ClapClip Worker node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mediaworker
+Group=mediaworker
+WorkingDirectory=@PREFIX@
+Environment=LOG_FILE=/var/lib/mediaworker/logs/mediaworker.log
+EnvironmentFile=@PREFIX@/.env
+ExecStart=@PREFIX@/.venv/bin/python -m mediaworker run --all-capabilities
+Restart=always
+RestartSec=5
+SuccessExitStatus=75
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=180
+
+[Install]
+WantedBy=multi-user.target

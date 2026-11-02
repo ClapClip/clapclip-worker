@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import ctypes
-from ctypes import wintypes
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -17,6 +15,10 @@ from .single_instance import FileLock, WorkerAlreadyRunning
 from .redaction import RedactingFormatter
 
 log = logging.getLogger("mediaworker.supervisor")
+
+# 0 on non-Windows. Passing the missing attribute raises AttributeError and the
+# supervise loop would retry forever. creationflags=0 is accepted on Linux.
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def process_roots(rows: list[dict]) -> list[dict]:
@@ -44,6 +46,8 @@ def snapshot(mode: str, shell: Path) -> list[dict]:
     # Only fixed, validated mode values enter this command. No .env is read.
     if mode not in {"run", "download-worker"}:
         raise ValueError("invalid runtime mode")
+    if os.name != "nt":
+        raise OSError("process inventory is only available on Windows")
     command = (
         "$ErrorActionPreference='Stop'; "
         "@(Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='ClapClipWoker.exe'\" "
@@ -54,7 +58,7 @@ def snapshot(mode: str, shell: Path) -> list[dict]:
     result = subprocess.run(
         [str(shell), "-NoProfile", "-NonInteractive", "-Command", command],
         capture_output=True, text=True, check=True, timeout=30,
-        creationflags=subprocess.CREATE_NO_WINDOW,
+        creationflags=_CREATE_NO_WINDOW,
     )
     data = json.loads(result.stdout) if result.stdout.strip() else []
     return data if isinstance(data, list) else [data]
@@ -62,6 +66,11 @@ def snapshot(mode: str, shell: Path) -> list[dict]:
 
 def wait_for_existing(row: dict, stop: threading.Event) -> None:
     """Wait on a verified OS handle; never stop an adopted Worker."""
+    if os.name != "nt":
+        raise OSError("existing-runtime adoption is only available on Windows")
+    import ctypes
+    from ctypes import wintypes
+
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel.OpenProcess.restype = wintypes.HANDLE
@@ -110,7 +119,7 @@ def supervise(mode: str, worker: Path, shell: Path, root: Path, stop: threading.
             child = subprocess.Popen(
                 command, cwd=root, env=env,
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=_CREATE_NO_WINDOW,
             )
             log.info("started runtime mode=%s pid=%d", mode, child.pid)
             while not stop.wait(1) and child.poll() is None:

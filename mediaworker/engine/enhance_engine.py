@@ -12,7 +12,7 @@ from PIL import Image, ImageOps
 
 from ..config import Config
 from ..images import validate_image
-from .base import Engine, JobContext, RunResult, session_options
+from .base import Engine, JobContext, RunResult, preload_cuda_libraries, session_options
 from .enhance_portrait import restore_portraits
 
 log = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ class OnnxModel:
         for provider in dict.fromkeys(candidates):
             try:
                 if provider == "CUDAExecutionProvider" and hasattr(ort, "preload_dlls"):
-                    ort.preload_dlls(directory="")
+                    preload_cuda_libraries(ort)
                 options = session_options([provider])
                 options.intra_op_num_threads = 2
                 options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")

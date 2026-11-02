@@ -54,7 +54,7 @@ Use **Python 3.13 or later**. Downloads also need **FFmpeg, FFprobe, and Node.js
 | Platform | Runtime notes |
 | --- | --- |
 | Windows | A pinned DirectML environment is provided. CUDA can be installed in a separate environment. |
-| Linux | Install a compatible ONNX Runtime provider. Image enhancement requires CUDA. |
+| Linux | Use the pinned CUDA requirements below. Image enhancement requires an NVIDIA GPU; face swap and background removal can fall back to CPU. |
 | macOS | The workbench can run supported tools, but the current image enhancement engine requires DirectML or CUDA and is unavailable on macOS. |
 
 A GPU is required for the current enhancement engine. Other tools depend on their installed models and runtime; starting the web interface does not mean every tool is ready.
@@ -78,7 +78,24 @@ py -3.13 -m venv .venv
 
 This avoids replacing DirectML with InsightFace's CPU ONNX Runtime dependency. Keep CPU, DirectML, and CUDA runtime installations in separate environments.
 
-On **macOS or Linux**:
+### Running on Linux
+
+Use Ubuntu 22.04 or 24.04 with **Python 3.13**, **FFmpeg**, **FFprobe**, **Git**, a C compiler (`build-essential`), and **Node.js 22+**. A CUDA node also needs a current NVIDIA driver, **CUDA 12.8 or newer**, and **cuDNN 9**. That combination matches the `onnxruntime-gpu` 1.24.4 wheel.
+
+```bash
+python3.13 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-unified-linux-cuda.txt
+python -m pip install --no-deps -e . "insightface==2.0"
+```
+
+Install the checkout and InsightFace with `--no-deps`. A normal install pulls the CPU `onnxruntime` wheel and hides the GPU build. Keep this environment separate from any CPU-only install. The same pins are the `linux-cuda` extra, restricted to Linux.
+
+`bash deploy/linux/install.sh` performs this setup and copies `deploy/linux/mediaworker.service`. It does not start the service and does not contain secrets. Copy `deploy/linux/env.example` to `.env` (the script does this only when `.env` is missing), replace the placeholders, then start the unit yourself. systemd runs `python -m mediaworker run --all-capabilities` as the unprivileged `mediaworker` user, restarts after the auto-updater's exit code 75, and sends `SIGTERM` with a 180 second stop timeout so in-flight jobs can drain. The unit opens no listening port. Use systemd on Linux; the Windows supervisor is not a Linux service.
+
+Image enhancement requires a GPU. Face swap and background removal use CUDA when the session loads and can fall back to CPU. Model files default to `~/.mediaworker/models` for the account that runs the process. Set `CAPABILITIES` to the tools that machine should offer. `HEALTH_FILE` is optional: when set, the node touches that file after each successful poll so an external monitor can notice a silent node. Leave it unset to disable the file.
+
+On **macOS**, or on **Linux without the CUDA runtime**:
 
 ```bash
 python3 -m venv .venv

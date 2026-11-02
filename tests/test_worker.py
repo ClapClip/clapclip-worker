@@ -916,6 +916,51 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(providers, ["CUDAExecutionProvider", "CPUExecutionProvider"])
         preload.assert_called_once_with(directory="")
 
+    def test_linux_cuda_runtime_is_preloaded_when_available(self):
+        import onnxruntime as ort
+        from mediaworker.engine import base
+
+        with (
+            patch.object(base.sys, "platform", "linux"),
+            patch.object(ort, "get_available_providers", return_value=[
+                "CUDAExecutionProvider", "CPUExecutionProvider"
+            ]),
+            patch.object(ort, "preload_dlls", create=True) as preload,
+        ):
+            providers = base.resolve_providers([
+                "CUDAExecutionProvider", "CPUExecutionProvider"
+            ])
+        self.assertEqual(providers, ["CUDAExecutionProvider", "CPUExecutionProvider"])
+        preload.assert_called_once_with()
+
+    def test_linux_cuda_preload_failure_keeps_the_cpu_provider(self):
+        import onnxruntime as ort
+        from mediaworker.engine import base
+
+        with (
+            patch.object(base.sys, "platform", "linux"),
+            patch.object(ort, "get_available_providers", return_value=["CUDAExecutionProvider"]),
+            patch.object(ort, "preload_dlls", create=True, side_effect=OSError("missing")),
+        ):
+            providers = base.resolve_providers(["CUDAExecutionProvider"])
+        self.assertEqual(providers, ["CUDAExecutionProvider", "CPUExecutionProvider"])
+
+    def test_gpu_session_cpu_fallback_is_logged(self):
+        from mediaworker.engine.base import warn_if_cpu_fallback
+
+        session = Mock()
+        session.get_providers.return_value = ["CPUExecutionProvider"]
+        with self.assertLogs("mediaworker.engine.base", level="WARNING") as captured:
+            warn_if_cpu_fallback(
+                session, ["CUDAExecutionProvider", "CPUExecutionProvider"], "cutout"
+            )
+        self.assertIn("CPUExecutionProvider", captured.output[0])
+        session.get_providers.return_value = ["DmlExecutionProvider", "CPUExecutionProvider"]
+        with self.assertNoLogs("mediaworker.engine.base", level="WARNING"):
+            warn_if_cpu_fallback(
+                session, ["DmlExecutionProvider", "CPUExecutionProvider"], "cutout"
+            )
+
     def test_pythonw_writes_a_real_rotating_log(self):
         from mediaworker.__main__ import _configure_logging
         root_logger = logging.getLogger()
