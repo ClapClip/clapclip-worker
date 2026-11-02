@@ -17,6 +17,7 @@ from .base import (
     RunResult,
     resolve_providers,
     session_options,
+    warn_if_cpu_fallback,
 )
 
 log = logging.getLogger(__name__)
@@ -57,6 +58,7 @@ class CutoutEngine(Engine):
             sess_options=session_options(providers),
             providers=providers,
         )
+        warn_if_cpu_fallback(self._session, providers, self._cfg.cutout_model)
         self._serialize_runs = "DmlExecutionProvider" in self._session.get_providers()
         log.info(
             "cutout model ready: %s providers=%s",

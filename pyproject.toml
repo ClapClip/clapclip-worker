@@ -31,6 +31,10 @@ windows-cuda = [
   "onnxruntime-gpu[cuda,cudnn]==1.24.4; sys_platform == 'win32'",
   "nvidia-cudnn-cu12==9.10.2.21; sys_platform == 'win32'",
 ]
+linux-cuda = [
+  "onnxruntime-gpu[cuda,cudnn]==1.24.4; sys_platform == 'linux'",
+  "nvidia-cudnn-cu12==9.10.2.21; sys_platform == 'linux'",
+]
 
 [project.scripts]
 mediaworker = "mediaworker.__main__:main"

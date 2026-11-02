@@ -12,7 +12,14 @@ import numpy as np
 
 from ..config import Config
 from ..images import validate_image
-from .base import Engine, JobContext, RunResult, resolve_providers, session_options
+from .base import (
+    Engine,
+    JobContext,
+    RunResult,
+    resolve_providers,
+    session_options,
+    warn_if_cpu_fallback,
+)
 
 log = logging.getLogger(__name__)
 
@@ -197,6 +204,7 @@ class FaceSwapEngine(Engine):
             identity_path.name,
             identity_session.get_providers(),
         )
+        warn_if_cpu_fallback(identity_session, providers, identity_path.name)
         for key in installed:
             try:
                 self._get_model(key)
@@ -265,6 +273,7 @@ class FaceSwapEngine(Engine):
             self._models[model_key] = model
             session = getattr(model, "session", model)
             log.info("fusion model ready: %s providers=%s", model_key, session.get_providers())
+            warn_if_cpu_fallback(session, providers, model_key)
             return model
 
     def _swap_inswapper(

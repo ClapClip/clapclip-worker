@@ -10,6 +10,8 @@ from collections.abc import Callable
 
 log = logging.getLogger(__name__)
 
+_GPU_PROVIDERS = ("CUDAExecutionProvider", "DmlExecutionProvider")
+
 
 @dataclass
 class JobContext:
@@ -90,6 +92,46 @@ def session_options(
     return options
 
 
+def preload_cuda_libraries(ort) -> None:
+    """Make CUDA/cuDNN libraries from the GPU wheel visible to ONNX Runtime.
+
+    Windows keeps the directory="" search used by the CUDA wheel. Linux calls
+    ``preload_dlls()`` when that helper exists. A Linux preload failure is
+    logged so face swap and cutout can still fall back to CPU.
+    """
+    if sys.platform == "win32":
+        # CUDA/cuDNN wheels live outside Windows' default DLL search path.
+        ort.preload_dlls(directory="")
+        return
+    if sys.platform.startswith("linux") and hasattr(ort, "preload_dlls"):
+        try:
+            ort.preload_dlls()
+        except Exception as exc:
+            log.warning(
+                "CUDA library preload failed (%s); GPU sessions may fall back to CPU",
+                type(exc).__name__,
+            )
+
+
+def warn_if_cpu_fallback(session, requested: list[str], label: str) -> None:
+    """Warn when a session that should use GPU is left on CPUExecutionProvider."""
+    if not any(provider in requested for provider in _GPU_PROVIDERS):
+        return
+    try:
+        actual = list(session.get_providers())
+    except Exception:
+        return
+    if any(provider in actual for provider in _GPU_PROVIDERS):
+        return
+    if "CPUExecutionProvider" not in actual:
+        return
+    log.warning(
+        "%s session fell back to CPUExecutionProvider; GPU providers %s were not used",
+        label,
+        [provider for provider in requested if provider in _GPU_PROVIDERS],
+    )
+
+
 def resolve_providers(preferred: list[str]) -> list[str]:
     """Keep only the ONNX Runtime execution providers actually installed, in
     the caller's priority order, always ending with CPU. Lets one build run on
@@ -102,11 +144,11 @@ def resolve_providers(preferred: list[str]) -> list[str]:
     except Exception as exc:  # pragma: no cover
         log.warning("onnxruntime not importable (%s); assuming CPU only", exc)
         available = {"CPUExecutionProvider"}
+        ort = None
 
     chosen = [p for p in preferred if p in available]
-    if sys.platform == "win32" and "CUDAExecutionProvider" in chosen:
-        # CUDA/cuDNN wheels live outside Windows' default DLL search path.
-        ort.preload_dlls(directory="")
+    if ort is not None and "CUDAExecutionProvider" in chosen:
+        preload_cuda_libraries(ort)
     if "CPUExecutionProvider" not in chosen:
         chosen.append("CPUExecutionProvider")
     log.info("onnx providers: requested=%s available=%s -> using=%s",

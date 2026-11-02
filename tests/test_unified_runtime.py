@@ -1,6 +1,7 @@
 import asyncio
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import threading
 from types import SimpleNamespace
@@ -119,12 +120,42 @@ class UnifiedRuntimeTests(unittest.TestCase):
                                  all_capabilities=True)
         self.assertEqual(start.call_args.args[0],
                          ['python.exe', '-m', 'mediaworker', 'run', '--all-capabilities'])
+        self.assertEqual(start.call_args.kwargs['creationflags'], getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         self.assertEqual(start.call_count, 1)
 
     def test_dedicated_download_mode_cannot_enable_all_capabilities(self):
         with self.assertRaisesRegex(ValueError, 'only unified run mode'):
             supervisor.supervise('download-worker', Path('python.exe'), Path('shell.exe'),
                                  Path('.'), threading.Event(), all_capabilities=True)
+
+    def test_health_file_defaults_off(self):
+        self.assertIsNone(self.cfg.health_file)
+
+    def test_health_file_path_comes_from_the_environment(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch.dict(os.environ, {'HEALTH_FILE': str(Path(temporary) / 'node')}, clear=True), \
+             patch('mediaworker.config.Path.home', return_value=Path('/tmp/unused-home')):
+            cfg = Config.from_env(load_env=False)
+        self.assertEqual(cfg.health_file, (Path(temporary) / 'node').resolve())
+
+    def test_successful_poll_touches_optional_health_file(self):
+        async def exercise(path):
+            self.cfg.runtime_dir = path.parent
+            self.cfg.health_file = path
+            shutdown = asyncio.Event()
+
+            async def claim(capabilities, models, **_options):
+                shutdown.set()
+                return None
+
+            registry = {'faceswap': SimpleNamespace(available_models=[])}
+            await scheduling._worker_loop(
+                0, self.cfg, SimpleNamespace(claim=claim), registry, shutdown, ['faceswap'])
+
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / 'health'
+            asyncio.run(exercise(target))
+            self.assertTrue(target.is_file())
 
 
 if __name__ == '__main__':

@@ -83,6 +83,8 @@ class Config:
     node_token_file: Path = Path.home() / ".mediaworker" / "node-token.json"
     runtime_dir: Path = Path.home() / ".mediaworker"
     download_api_prefix: str = "/api/worker/download"
+    # Touched after each successful poll when set. Unset leaves monitoring off.
+    health_file: Path | None = None
 
     @classmethod
     def from_env(cls, load_env: bool = True) -> "Config":
@@ -168,6 +170,11 @@ class Config:
             node_token_file=_path(os.environ.get("NODE_TOKEN_FILE"), home / "node-token.json"),
             runtime_dir=_path(os.environ.get("NODE_RUNTIME_DIR"), home),
             download_api_prefix=os.environ.get("WORKER_DOWNLOAD_API_PREFIX", "/api/worker/download").rstrip("/"),
+            health_file=(
+                Path(os.path.expanduser(os.environ["HEALTH_FILE"])).resolve()
+                if os.environ.get("HEALTH_FILE", "").strip()
+                else None
+            ),
         )
 
     @property
