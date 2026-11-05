@@ -11,6 +11,7 @@ import httpx
 
 _DOWNLOAD_TIMEOUT = httpx.Timeout(60.0)
 _UPLOAD_TIMEOUT = httpx.Timeout(120.0)
+_RETRYABLE_TRANSFER = (httpx.NetworkError, httpx.TimeoutException, httpx.RemoteProtocolError)
 
 
 def transfer_client() -> httpx.AsyncClient:
@@ -35,18 +36,36 @@ async def download(url: str, dest: Path, max_bytes: int = 6 * 1024 * 1024,
     dest.parent.mkdir(parents=True, exist_ok=True)
     options = {"timeout": _DOWNLOAD_TIMEOUT} if client is not None else {}
     async with _client_or_owned(client, _DOWNLOAD_TIMEOUT) as http:
-        async with http.stream("GET", url, **options) as resp:
-            resp.raise_for_status()
-            if int(resp.headers.get("Content-Length", "0")) > max_bytes:
-                raise ValueError("download exceeds byte limit")
-            received = 0
-            with dest.open("wb") as fh:
-                async for chunk in resp.aiter_bytes():
-                    received += len(chunk)
-                    if received > max_bytes:
+        for attempt in range(3):
+            complete = False
+            try:
+                async with http.stream("GET", url, **options) as resp:
+                    resp.raise_for_status()
+                    expected = int(resp.headers.get("Content-Length", "0"))
+                    if expected > max_bytes:
                         raise ValueError("download exceeds byte limit")
-                    fh.write(chunk)
-    return dest
+                    received = 0
+                    # Each retry starts at byte zero, including an existing dest.
+                    with dest.open("wb") as fh:
+                        async for chunk in resp.aiter_bytes():
+                            received += len(chunk)
+                            if received > max_bytes:
+                                raise ValueError("download exceeds byte limit")
+                            fh.write(chunk)
+                    # Content-Length counts encoded wire bytes, not decoded data.
+                    wire_bytes = (resp.num_bytes_downloaded if resp.headers.get("Content-Encoding", "identity") != "identity"
+                                  else received)
+                    if expected > 0 and wire_bytes != expected:
+                        raise httpx.RemoteProtocolError("incomplete input body")
+                complete = True
+                return dest
+            except _RETRYABLE_TRANSFER:
+                if attempt == 2:
+                    raise
+            finally:
+                if not complete:
+                    dest.unlink(missing_ok=True)
+            await asyncio.sleep(0.5 * 2 ** attempt)
 
 
 async def upload(put_url: str, src: Path, content_type: str = "application/octet-stream", max_bytes: int | None = 32 * 1024 * 1024,
@@ -78,7 +97,7 @@ async def upload(put_url: str, src: Path, content_type: str = "application/octet
                 )
                 resp.raise_for_status()
                 return
-            except (httpx.NetworkError, httpx.TimeoutException):
+            except _RETRYABLE_TRANSFER:
                 if attempt == 2:
                     raise
                 # An attempt-specific S3 PUT is idempotent even after a lost

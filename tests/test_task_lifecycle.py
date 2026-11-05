@@ -154,7 +154,7 @@ class LifecycleContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(failure, FailureReport('MEDIA_UNAVAILABLE', False, 'info', 'HTTP_FORBIDDEN'))
         error = RuntimeError('https://private.test/signed?token=secret')
         failure = engine.failure_report(error, {'operation': 'https://secret'})
-        self.assertEqual(failure, FailureReport('MEDIA_UNAVAILABLE', False, 'process', 'UNKNOWN_FAILURE'))
+        self.assertEqual(failure, FailureReport('MEDIA_UNAVAILABLE', False, 'process', 'RUNTIME_ERROR'))
 
     def test_custom_download_prefix_and_heartbeat_cadence_are_preserved(self):
         routes = QueueRoutes('/api/worker/media')
@@ -169,3 +169,108 @@ class LifecycleContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(lease_heartbeat_interval('cutout', 3), 1)
         with self.assertRaises(ValueError):
             QueueRoutes('/api/worker/../download')
+
+
+class LeaseRaceTests(unittest.IsolatedAsyncioTestCase):
+    setUp = LifecycleContractTests.setUp
+
+    async def run_race(self, stage, *, fenced=True):
+        from types import SimpleNamespace
+        from mediaworker.client import LeaseLost
+        import threading
+        lost_ready, active = asyncio.Event(), asyncio.Event()
+        thread_cancelled = threading.Event()
+        wrote_after_cancel = threading.Event()
+        io_closed = asyncio.Event()
+        async def heartbeat_loop(_client, _job, stop, lost, cancel, progress):
+            await active.wait()
+            if fenced:
+                lost.set()
+            cancel.set()
+            thread_cancelled.set()
+            lost_ready.set()
+            await stop.wait()
+        class RaceEngine(FixtureEngine):
+            def run(_, ctx):
+                if stage == "engine":
+                    loop.call_soon_threadsafe(active.set)
+                    if not thread_cancelled.wait(2):
+                        raise AssertionError("heartbeat did not cancel engine")
+                    (ctx.workdir/"thread-finished").write_bytes(b"safe")
+                    wrote_after_cancel.set()
+                    raise RuntimeError("CANCELLED")
+                return super().run(ctx)
+        async def download(*_):
+            if stage == "input":
+                active.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    io_closed.set()
+            return {}
+        async def upload(*_, **__):
+            if stage == "upload":
+                active.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    io_closed.set()
+        loop = asyncio.get_running_loop()
+        client = SimpleNamespace(heartbeat=AsyncMock(),complete=AsyncMock(),fail=AsyncMock())
+        job = ClaimedJob(id=JOB_ID, lease_token=LEASE, attempt=1,task_type="download",
+            params={"operation":"info"}, result={"put_url":"https://offline.test/put", "key":"result"})
+        engine = RaceEngine("download", "application/json")
+        with patch.object(lifecycle,"_heartbeat_loop",side_effect=heartbeat_loop), \
+             patch.object(lifecycle,"_download_inputs",side_effect=download), \
+             patch.object(storage,"upload",side_effect=upload):
+            await asyncio.wait_for(lifecycle._process_job(self.cfg,client,{"download":engine},job),3)
+        self.assertTrue(lost_ready.is_set())
+        client.complete.assert_not_awaited()
+        if fenced:
+            client.fail.assert_not_awaited()
+        else:
+            client.fail.assert_awaited_once_with(JOB_ID,LEASE,"CANCELLED")
+        if stage == "engine":
+            self.assertTrue(wrote_after_cancel.is_set())
+        else:
+            self.assertTrue(io_closed.is_set())
+        self.assertFalse((self.cfg.work_dir/JOB_ID).exists())
+
+    async def test_fencing_during_input_stops_and_joins_transfer(self):
+        await self.run_race("input")
+
+    async def test_fencing_during_engine_error_suppresses_failure_ack(self):
+        await self.run_race("engine")
+
+    async def test_fencing_during_upload_stops_io_without_complete(self):
+        await self.run_race("upload")
+
+    async def test_cancel_without_lease_loss_keeps_cancel_failure(self):
+        await self.run_race("engine",fenced=False)
+
+    async def test_fenced_input_completion_does_not_start_engine(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        async def heartbeat_loop(_client,_job,stop,lost,cancel,progress):
+            lost.set()
+            await stop.wait()
+        engine = SimpleNamespace(run=Mock(), result_byte_limit=Mock())
+        client = SimpleNamespace(heartbeat=AsyncMock(),complete=AsyncMock(),fail=AsyncMock())
+        job = ClaimedJob(id=JOB_ID,lease_token=LEASE,attempt=1,task_type="cutout",
+            result={"put_url":"https://offline.test/put","key":"result"})
+        with patch.object(lifecycle,"_heartbeat_loop",side_effect=heartbeat_loop):
+            await lifecycle._process_job(self.cfg,client,{"cutout":engine},job)
+        engine.run.assert_not_called()
+        client.complete.assert_not_awaited()
+        client.fail.assert_not_awaited()
+
+    def test_unknown_download_failures_have_fixed_safe_type_categories(self):
+        cases = [(json.JSONDecodeError("private URL", "secret", 0), "INVALID_SOURCE_JSON"),
+                 (httpx.RemoteProtocolError("https://private/signed"), "NETWORK_PROTOCOL_ERROR"),
+                 (OSError("private-path"), "LOCAL_IO_ERROR"),
+                 (ValueError("private data"), "INVALID_DATA"),
+                 (RuntimeError("https://private/signed"), "RUNTIME_ERROR"),
+                 (Exception("private-secret"), "UNKNOWN_FAILURE")]
+        for error, code in cases:
+            failure = DownloadEngine(self.cfg).failure_report(error,{"operation":"info"})
+            self.assertEqual(failure,FailureReport("MEDIA_UNAVAILABLE",False,"info",code))

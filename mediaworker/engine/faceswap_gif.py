@@ -1,4 +1,6 @@
 """Explicit animated target adapter; static browser crop protocol stays intact."""
+import logging
+
 import cv2
 from dataclasses import replace
 import numpy as np
@@ -8,6 +10,13 @@ from ..gif_media import GIF_LIMITS, GifDeadline, GifWriter, check_cancel, inspec
 from ..images import validate_image
 from .base import RunResult, resolve_providers, session_options
 from .enhance_portrait import _face_indices
+
+
+log = logging.getLogger(__name__)
+
+
+class NoUsableGifFace(ValueError):
+    """No face met the current detector/identity gates; not proof of no face."""
 
 
 class GifFaceSwap:
@@ -54,9 +63,11 @@ class GifFaceSwap:
             faces.append(Face(kps=kps.astype(np.float32), bbox=np.concatenate((center - size / 2, center + size / 2))))
         return faces
 
-    def _select(self, image, reference, cancel):
+    def _select(self, image, reference, cancel, diagnostics=None):
         faces = self._faces(image)
         if not faces:
+            if diagnostics is not None:
+                diagnostics["no_usable_detection"] += 1
             return None, reference
         candidates = []
         for face in faces if reference is not None else faces[:1]:
@@ -72,6 +83,8 @@ class GifFaceSwap:
         # A fixed reference prevents drift. Ambiguous or missing identities keep
         # the frame unchanged; never switch to whichever face is now largest.
         if candidates[0][0] < .4 or len(candidates) > 1 and candidates[0][0] - candidates[1][0] < .05:
+            if diagnostics is not None:
+                diagnostics["identity_rejected"] += 1
             return None, reference
         return candidates[0][1], reference
 
@@ -108,6 +121,7 @@ class GifFaceSwap:
         output = ctx.workdir / "result.gif"
         writer = GifWriter(output, info, min(self.cfg.max_result_bytes, GIF_LIMITS["maxResultBytes"]), ctx.cancel)
         reference, swapped, success = None, 0, False
+        diagnostics = {"no_usable_detection": 0, "identity_rejected": 0}
         try:
             with Image.open(target) as image:
                 for index, duration in enumerate(info.durations):
@@ -115,7 +129,7 @@ class GifFaceSwap:
                     image.seek(index)
                     rgba = image.convert("RGBA")
                     bgr = np.asarray(rgba.convert("RGB"))[..., ::-1].copy()
-                    face, reference = self._select(bgr, reference, ctx.cancel)
+                    face, reference = self._select(bgr, reference, ctx.cancel, diagnostics)
                     check_cancel(ctx.cancel)
                     if face is not None:
                         if spec.kind == "inswapper":
@@ -130,7 +144,9 @@ class GifFaceSwap:
                     writer.append(rgba, duration)
                     ctx.progress("faceswap", int(95 * (index + 1) / len(info.durations)))
             if not swapped:
-                raise ValueError("no usable target face in GIF")
+                log.warning("job %s GIF face selection frames=%d matched=0 no_usable_detection=%d identity_rejected=%d",
+                            ctx.job_id, len(info.durations), diagnostics["no_usable_detection"], diagnostics["identity_rejected"])
+                raise NoUsableGifFace("NO_USABLE_TARGET_FACE")
             check_cancel(ctx.cancel)
             success = True
         finally:

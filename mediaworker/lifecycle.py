@@ -70,9 +70,12 @@ async def _process_job(
         phase = time.perf_counter()
         if is_gif:
             transfer = storage.transfer_client()
-        inputs = await _download_inputs(job.inputs, workdir, cfg.max_image_bytes, transfer)
+        inputs = await _transfer_while_owned(
+            _download_inputs(job.inputs, workdir, cfg.max_image_bytes, transfer), lost)
         download_seconds = time.perf_counter() - phase
 
+        if lost.is_set():
+            raise LeaseLost("lease expired before processing")
         ctx = JobContext(
             job_id=job.id,
             task_type=job.task_type,
@@ -99,6 +102,8 @@ async def _process_job(
             raise LeaseLost("lease expired during processing")
         # Confirm ownership immediately before upload, even after a missed beat.
         await client.heartbeat(job.id, job.lease_token)
+        if lost.is_set():
+            raise LeaseLost("lease expired before upload")
         output_limit = engine.result_byte_limit(job.params, cfg.max_result_bytes)
         if output_limit is None:
             # Only the explicit current download media policy is unbounded.
@@ -115,10 +120,13 @@ async def _process_job(
         output_bytes = result.output_path.stat().st_size if is_gif else 0
         phase = time.perf_counter()
         options = {"client": transfer} if transfer is not None else {}
-        await storage.upload(job.result.put_url, result.output_path, result.content_type, output_limit, **options)
+        await _transfer_while_owned(
+            storage.upload(job.result.put_url, result.output_path, result.content_type, output_limit, **options), lost)
         upload_seconds = time.perf_counter() - phase
         extra = {"duration": result.duration} if job.task_type == "download" and result.duration is not None else {}
         phase = time.perf_counter()
+        if lost.is_set():
+            raise LeaseLost("lease expired before completion")
         await client.complete(job.id, job.lease_token, job.result.key, result.width, result.height, **extra)
         # Observability must never send fail after an accepted terminal ACK.
         with suppress(Exception):
@@ -129,6 +137,11 @@ async def _process_job(
     except LeaseLost:
         log.warning("job %s discarded after lease loss", job.id)
     except Exception as exc:
+        if lost.is_set():
+            # A cancelled engine may throw its own error after fencing. Never
+            # report a business failure against a lease we no longer own.
+            log.warning("job %s discarded after lease loss", job.id)
+            return
         failure = (engine.failure_report(exc, job.params) if engine
                    else queue_failure_report(job.task_type, exc, job.params))
         if failure.include_traceback:
@@ -170,3 +183,19 @@ async def _download_inputs(urls, workdir, max_bytes, transfer):
             if not task.done():
                 task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
+
+
+async def _transfer_while_owned(transfer, lost):
+    """Stop async I/O on fencing; join all writers before attempt cleanup."""
+    pending = asyncio.create_task(transfer)
+    fenced = asyncio.create_task(lost.wait())
+    try:
+        await asyncio.wait((pending, fenced), return_when=asyncio.FIRST_COMPLETED)
+        if lost.is_set():
+            raise LeaseLost("lease expired during transfer")
+        return await pending
+    finally:
+        for task in (pending, fenced):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(pending, fenced, return_exceptions=True)

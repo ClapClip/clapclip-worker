@@ -1,6 +1,10 @@
 """Route existing queue namespaces without coupling transport to engine work."""
 from __future__ import annotations
 
+import json
+
+import httpx
+
 from .models import ClaimedJob
 from .engine.base import FailureReport
 
@@ -42,7 +46,7 @@ def queue_failure_report(task_type: str, error: Exception, params: dict) -> Fail
         phase = "process"
     reason = getattr(error, "diagnostic_code", str(error))
     if not _safe_error_code(reason):
-        reason = "UNKNOWN_FAILURE"
+        reason = _safe_failure_kind(error)
     message = str(error)
     if not _safe_error_code(message):
         message = "MEDIA_UNAVAILABLE"
@@ -52,3 +56,21 @@ def queue_failure_report(task_type: str, error: Exception, params: dict) -> Fail
 def _safe_error_code(value) -> bool:
     return (isinstance(value, str) and value.isupper()
             and value.replace("_", "").isalpha() and len(value) <= 64)
+
+
+def _safe_failure_kind(error):
+    # Fixed categories only: exception messages and arbitrary class names can
+    # contain source URLs, signatures or extractor output.
+    for kind, code in ((json.JSONDecodeError, "INVALID_SOURCE_JSON"),
+                       (httpx.TimeoutException, "NETWORK_TIMEOUT"),
+                       (httpx.RemoteProtocolError, "NETWORK_PROTOCOL_ERROR"),
+                       (httpx.NetworkError, "NETWORK_ERROR"),
+                       (TimeoutError, "OPERATION_TIMEOUT"),
+                       (OSError, "LOCAL_IO_ERROR"),
+                       (ValueError, "INVALID_DATA"),
+                       (TypeError, "INVALID_DATA"),
+                       (AttributeError, "INVALID_DATA"),
+                       (RuntimeError, "RUNTIME_ERROR")):
+        if isinstance(error, kind):
+            return code
+    return "UNKNOWN_FAILURE"

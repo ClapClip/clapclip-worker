@@ -58,3 +58,13 @@ flowchart LR
 公共生命周期改变应运行完整unittest；独立下载环境运行 `test_download*.py`、`test_claim_recovery.py` 和 `test_task_lifecycle.py`。静态检查使用AST/语法编译和diff检查。已有本地ffmpeg生成样本回归不等于线上下载验收。
 
 提交只在main；推送前核对自动更新/CI触发与当前运行授权。没有运行切换授权时，完成代码与本地验收，保留现有服务，明确报告尚未加载的新提交。不要用生产任务作为默认回归测试。
+
+## 传输恢复与失败分类
+
+匿名输入 GET 仅对网络、超时和远端协议断流最多尝试三次，退避 0.5/1 秒。每次从零截断重写，拒绝声明长度与实际流长度不符的输入；失败或取消删除半成品。解码后的流仍逐块执行原字节上限，Content-Length 按编码后的 wire bytes 校验。4xx、超限与本地错误不重试。结果 PUT 维持三次上限，并包含远端协议断开；每次重新打开同一 attempt 文件，claim 不重放。
+
+失租会终止并等待输入/上传协程，启动推理、上传和 complete 前检查所有权；引擎因失租而抛出取消或处理错误时，只丢弃本地结果，不发送普通 fail。外部协程取消仍等待同步推理结束后清理。已接受的 complete ACK 不因后续观测错误改写终态。
+
+显式 faceswap GIF 的专用异常通过现有 fail.error 字符串发送 NO_USABLE_TARGET_FACE，含义为“未检测到可用于换脸的人脸”，不是断言素材绝对无人脸。不新增 JSON 字段，不放松检测或身份门限。仅日志记录总帧数、无可用检测帧数及身份拒绝帧数，不记录图像、关键点、身份特征或媒体路径。网站需兼容该稳定码和旧版精确文本，并自行决定确定性失败的终态及退款；Worker 不擅自修改网站记录。
+
+下载未知错误按固定异常类型映射为 INVALID_SOURCE_JSON、NETWORK_TIMEOUT、NETWORK_PROTOCOL_ERROR、NETWORK_ERROR、OPERATION_TIMEOUT、LOCAL_IO_ERROR、INVALID_DATA、RUNTIME_ERROR 或 UNKNOWN_FAILURE；不复制异常原文或任意类名。公开错误仍沿用既有安全码，类别仅进入脱敏日志。

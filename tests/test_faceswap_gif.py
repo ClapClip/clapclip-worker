@@ -173,11 +173,26 @@ class GifTests(unittest.TestCase):
     def test_no_faces_is_failure_with_cleanup_and_static_gif_is_rejected(self):
         engine, ctx = self.engine(), self.context()
         with patch.object(engine._gif, "_select", return_value=(None, None)), \
-                self.assertRaisesRegex(ValueError, "no usable"):
+                self.assertRaisesRegex(ValueError, "NO_USABLE_TARGET_FACE"):
             engine.run(ctx)
         self.assertFalse((self.root / "result.gif").exists())
         with self.assertRaisesRegex(ValueError, "unsupported image"):
             engine.run(replace(ctx, params={"mode": "face"}))
+
+    def test_no_usable_face_has_stable_safe_failure_and_counts(self):
+        from mediaworker.engine.faceswap_gif import NoUsableGifFace
+        engine, ctx = self.engine(), self.context()
+        with patch.object(engine._gif, "_faces", return_value=[]), \
+                self.assertLogs("mediaworker.engine.faceswap_gif", level="WARNING") as logs:
+            with self.assertRaises(NoUsableGifFace) as error:
+                engine.run(ctx)
+        report = engine.failure_report(error.exception, ctx.params)
+        self.assertEqual(report.message, "NO_USABLE_TARGET_FACE")
+        self.assertEqual(report.diagnostic_code, "NO_USABLE_TARGET_FACE")
+        self.assertFalse(report.include_traceback)
+        self.assertIn("frames=3 matched=0 no_usable_detection=3 identity_rejected=0", "\n".join(logs.output))
+        self.assertNotIn(str(ctx.inputs["target"]), "\n".join(logs.output))
+        self.assertFalse((ctx.workdir/"result.gif").exists())
 
     def test_cancel_between_frames_stops_inference_and_removes_output(self):
         engine, ctx = self.engine(), self.context()

@@ -323,6 +323,13 @@ class FaceSwapEngine(Engine):
         mask = _resize_model_mask(model_mask, edge_blur, fusion_area)
         return _paste_face(image, fake, mask, matrix)
 
+    def failure_report(self, error, params):
+        from .faceswap_gif import NoUsableGifFace
+        from .base import FailureReport
+        if isinstance(error, NoUsableGifFace) and params.get("mode") == "gif" and params.get("targetMedia") == "gif":
+            return FailureReport("NO_USABLE_TARGET_FACE", False, "process", "NO_USABLE_TARGET_FACE")
+        return super().failure_report(error, params)
+
     def run(self, ctx: JobContext) -> RunResult:
         target_path = ctx.inputs.get("target")
         source_path = ctx.inputs.get("source")

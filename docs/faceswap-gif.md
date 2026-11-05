@@ -92,3 +92,7 @@ and await sibling writers before cleanup. Existing per-request timeouts, byte
 limits and upload retry rules remain intact. Other task types keep their previous
 transfer path. Successful GIF jobs log download/process/upload/complete timings
 and output byte count; observation failures cannot alter an accepted terminal ACK.
+
+### 无可用目标人脸
+
+Worker 对整段未匹配到任何可用目标人脸的显式 GIF 返回现有 `error` 字符串 `NO_USABLE_TARGET_FACE`。该值表示“未检测到可用于换脸的人脸”，不表示图像中绝对没有人脸。旧版字符串 `no usable target face in GIF` 由网站精确兼容。不能返回原动画冒充成功，检测、关键点及固定身份匹配门限维持不变。失败日志仅包含帧数统计；输入、身份数据和媒体链接不进入日志。
