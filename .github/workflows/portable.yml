@@ -1,0 +1,58 @@
+name: Portable installation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            system: Windows
+            machine: AMD64
+          - runner: macos-15
+            system: Darwin
+            machine: arm64
+          - runner: macos-15-intel
+            system: Darwin
+            machine: x86_64
+          - runner: ubuntu-24.04
+            system: Linux
+            machine: x86_64
+          - runner: ubuntu-24.04-arm
+            system: Linux
+            machine: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    env:
+      MEDIAWORKER_LOAD_DOTENV: "0"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - name: Assert runner OS and native architecture
+        shell: bash
+        run: |
+          python -c "import platform; assert platform.system() == '${{ matrix.system }}'; assert platform.machine() == '${{ matrix.machine }}'"
+      - name: Install without models, credentials or autostart
+        run: python scripts/setup-worker.py install
+      - name: Offline imports and doctor
+        run: python scripts/setup-worker.py doctor
+      - name: Offline private configuration diagnostics
+        run: python scripts/setup-worker.py doctor --mode distributed --env-file .env.portable --auth-error FORCE_CHANGE_PASSWORD
+      - name: Offline regression suite in the installed environment
+        shell: bash
+        run: |
+          python -c "from pathlib import Path; import subprocess,sys; p=Path('.venv-portable') / ('Scripts/python.exe' if sys.platform=='win32' else 'bin/python'); sys.exit(subprocess.call([str(p),'-B','-m','unittest','discover','-s','tests','-v']))"

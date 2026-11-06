@@ -1,0 +1,16 @@
+# Native CPython 3.13; macOS >=13, Windows x64, glibc Linux >=2.27.
+# CPU baseline; macOS wheel also exposes CoreML where supported.
+# Keep this separate from the deployed Windows DirectML/CUDA environments.
+httpx==0.28.1
+pydantic==2.13.5
+python-dotenv==1.2.3
+pillow==12.3.0
+numpy==2.2.6
+opencv-python==4.12.0.88
+onnxruntime==1.23.2
+insightface==2.0
+onnx==1.22.0
+scipy==1.18.1
+scikit-image==0.26.0
+pycognito==2024.5.1
+yt-dlp[default]==2026.8.19

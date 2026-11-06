@@ -13,7 +13,7 @@
 
 ## 本地安装
 
-建议 Python 3.13。先在项目目录建立环境：
+跨平台首次安装优先使用[统一安装器和 doctor](portable-setup.md)，使用普通原生 Python 3.13。下面保留人工配置 Windows DirectML 的路径；它与 portable CPU 环境分开，不能混装。
 
 ```powershell
 # Windows / DirectML
@@ -23,9 +23,9 @@ py -3.13 -m venv .venv
 ```
 
 ```bash
-# macOS / Linux
-python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[downloader]'
+# macOS / Linux（Windows 也可用 setup-worker.ps1 的相同参数）
+bash scripts/setup-worker.sh install
+bash scripts/setup-worker.sh doctor --load-models
 ```
 
 下载功能还需要 FFmpeg、FFprobe 和 Node.js 在 PATH 中，具体要求见下载部署说明。CUDA 用户按现有 CUDA 部署说明安装对应运行环境，勿同时安装多套 ONNX Runtime。图片引擎仍沿用各自硬件要求：换脸检测支持已安装的 ONNX provider；当前画质增强仅支持 DirectML 或 CUDA，因此 macOS 上该工具会显示未就绪，其余工具可独立使用。
@@ -61,10 +61,10 @@ Windows使用上述顺序，是为了避免InsightFace声明的CPU版 `onnxrunti
 ```
 
 ```bash
-# macOS / Linux
-bash scripts/start-local.sh
+# macOS / Linux，使用新的 portable 安装
+bash scripts/setup-worker.sh start
 # 自定义端口和本地配置
-bash scripts/start-local.sh --port 8766 --env-file .env.local
+bash scripts/setup-worker.sh start --port 8766 --env-file .env.local
 ```
 
 打开终端显示的 `http://127.0.0.1:8765`。换脸上传目标照片和来源照片，自动使用两张照片中最大且可对齐的人脸，按模型原生 128/256 尺寸裁剪，再把结果融合回完整目标图。去背景输出透明 PNG。增强选择模型及倍率。下载先解析链接，再选择可用格式下载。可取消任务、保存结果或清理单项结果。

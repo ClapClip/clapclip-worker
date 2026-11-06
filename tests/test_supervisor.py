@@ -42,6 +42,7 @@ class SupervisorInventoryTests(unittest.TestCase):
             supervise('run', Path('unused'), Path('unused'), Path('.'), stop)
         start.assert_not_called()
 
+    @patch('mediaworker.supervisor.subprocess.CREATE_NO_WINDOW', 0, create=True)
     def test_exited_child_is_restarted_after_a_fresh_inventory_check(self):
         stop = threading.Event()
         waits = 0

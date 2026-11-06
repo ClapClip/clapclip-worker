@@ -53,6 +53,10 @@ flowchart LR
 
 ## 安全验证及发布
 
+跨平台部署入口为 `scripts/setup-worker.py`，POSIX/PowerShell 包装器只负责找到普通 Python 3.13。共享 `deployment.py` 管理独立 portable venv、生成不覆盖已有文件的本机示例配置、离线 doctor 及显式前台启动。安装/诊断不调用模型同步、节点认证或 claim，不设置后台/自启。doctor 的依赖、文件存在、模型加载、授权配置和运行状态分开报告；显式分布式配置只核对其选定缓存的节点/API，不更改缓存。
+
+portable 启动在本机 OS 锁内按实际 provider/模型/工具筛选能力。`runner.run_forever(available_only=True)` 仅供该入口选择：在认证前按成功加载的 registry 注册，认证后再次与服务端授权取交集；空交集停止。既有 `run --all-capabilities` 的严格门控不变，本地工作台对显式禁用的能力不加载。三槽、下载最多一个、租约/fencing 和处理算法不变。
+
 活跃进程通常已加载runner/client/引擎模块，但一些引擎仍有惰性库导入，updater也可能读取新源码。因此先复制已跟踪文件到忽略的 `build/` 目录，在该目录运行已安装解释器（cwd优先于editable install）。隔离目录不复制 `.env`、token、模型或用户媒体；临时测试显式关闭dotenv加载。
 
 公共生命周期改变应运行完整unittest；独立下载环境运行 `test_download*.py`、`test_claim_recovery.py` 和 `test_task_lifecycle.py`。静态检查使用AST/语法编译和diff检查。已有本地ffmpeg生成样本回归不等于线上下载验收。

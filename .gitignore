@@ -1,4 +1,5 @@
 .venv/
+.venv-portable/
 .venv312/
 .venv312-cuda/
 .venv-cuda/

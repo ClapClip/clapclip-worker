@@ -108,6 +108,7 @@ class UnifiedRuntimeTests(unittest.TestCase):
 
         asyncio.run(exercise())
 
+    @patch('mediaworker.supervisor.subprocess.CREATE_NO_WINDOW', 0, create=True)
     def test_supervisor_forwards_all_capabilities_to_one_child(self):
         stop = threading.Event()
         child = Mock(pid=10)

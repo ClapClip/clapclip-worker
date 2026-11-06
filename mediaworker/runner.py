@@ -32,7 +32,8 @@ def _install_signal_handlers(shutdown: asyncio.Event) -> None:
             signal.signal(sig, lambda *_: _request_stop())
 
 
-async def run_forever(cfg: Config, *, require_all_engines: bool = False) -> None:
+async def run_forever(cfg: Config, *, require_all_engines: bool = False,
+                      available_only: bool = False) -> None:
     cfg.require_api()
     from .engine.registry import _mock_enabled
     from .model_registry import sync_models
@@ -52,7 +53,16 @@ async def run_forever(cfg: Config, *, require_all_engines: bool = False) -> None
     if not registry:
         raise SystemExit("no engines loaded — check CAPABILITIES and that models are present")
 
+    if available_only:
+        # Only the portable foreground launcher opts into actual readiness.
+        cfg.capabilities = list(registry)
+        cfg.claim_capabilities = None
     await bootstrap_node_token(cfg)
+    if available_only:
+        registry = {cap: engine for cap, engine in registry.items() if cap in cfg.capabilities}
+        cfg.capabilities = list(registry)
+        if not registry:
+            raise SystemExit("no locally ready engines are authorized for this node")
     missing_claims = sorted(set(cfg.claim_capabilities or []) - set(cfg.capabilities))
     if missing_claims:
         raise SystemExit("this runtime's claim capabilities are not authorized for the shared node: " + ", ".join(missing_claims))

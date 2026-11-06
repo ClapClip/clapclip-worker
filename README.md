@@ -7,7 +7,7 @@ The local workbench lets you upload images, choose a model, preview results, and
 Distributed face swap also supports bounded animated GIF targets with explicit
 queue gating, identity matching and GIF output. See the [GIF contract](docs/faceswap-gif.md).
 
-[Local setup](#local-web-interface) · [Distributed deployment](#private-distributed-workers) · [Model licenses](THIRD_PARTY.md) · [Contributing](CONTRIBUTING.md)
+[Cross-platform quick start](docs/portable-setup.md) · [Local setup](#local-web-interface) · [Distributed deployment](#private-distributed-workers) · [Model licenses](THIRD_PARTY.md)
 
 ## ClapClip websites
 
@@ -49,7 +49,7 @@ Download processing can scale larger sources and trim longer recordings. There i
 
 ## Requirements and platform support
 
-Use **Python 3.13 or later**. Downloads also need **FFmpeg, FFprobe, and Node.js 22+** on `PATH`. Install the ONNX Runtime provider appropriate for your hardware.
+The portable installer uses **ordinary native CPython 3.13** with pinned wheel dependencies: Windows x64, macOS 13+ Apple Silicon/Intel, and glibc Linux 2.27+ x64/ARM64. Other architectures, free-threaded Python and newer Python minors are checked explicitly rather than silently built from source. Downloads also need **FFmpeg, FFprobe, and Node.js 22+** on `PATH`.
 
 | Platform | Runtime notes |
 | --- | --- |
@@ -68,39 +68,29 @@ git clone https://github.com/ClapClip/clapclip-worker.git
 cd clapclip-worker
 ```
 
-On **Windows with DirectML**, install in this order:
-
-```powershell
-py -3.13 -m venv .venv
-.venv\Scripts\python -m pip install -r requirements-unified-windows.txt
-.venv\Scripts\python -m pip install --no-deps -e . "insightface==2.0"
-```
-
-This avoids replacing DirectML with InsightFace's CPU ONNX Runtime dependency. Keep CPU, DirectML, and CUDA runtime installations in separate environments.
-
-On **macOS or Linux**:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e '.[downloader]'
-```
-
-Install models for the tools you want to use, then start the workbench:
+Use the same installer, doctor and foreground launcher on all supported systems:
 
 ```powershell
 # Windows
-.\scripts\start-local.ps1
+.\scripts\setup-worker.ps1 install
+.\scripts\setup-worker.ps1 doctor --load-models
+.\scripts\setup-worker.ps1 start
 ```
 
 ```bash
 # macOS / Linux
-bash scripts/start-local.sh
+bash scripts/setup-worker.sh install
+bash scripts/setup-worker.sh doctor --load-models
+bash scripts/setup-worker.sh start
 ```
+
+The installer preserves existing environments/configuration and creates `.venv-portable` plus private example configurations with independent node/state identities. It does not download models, authenticate, claim jobs, start the worker or install autostart services. Prepare licensed models before `start`; missing capabilities are reported separately from a successful dependency installation. See [the support matrix, system-tool installation and troubleshooting](docs/portable-setup.md).
+
+The portable Windows/Linux environment is a CPU baseline; macOS may also expose CoreML. Enhancement still requires DirectML or CUDA. For an independent Windows GPU environment use the [existing DirectML setup](docs/local-mode.md#本地安装); never mix CPU, DirectML and CUDA distributions in one environment.
 
 Open **http://127.0.0.1:8765**. Upload images or analyse a supported public media link, choose an available model or format, and save the result. Missing models leave the affected tool unavailable without preventing the workbench from starting.
 
-You can also run `python -m mediaworker local` inside the configured environment. Local mode does not load the default `.env`, register a node, or claim remote jobs. To configure model paths, copy `.env.local.example` to `.env.local` and pass `--env-file .env.local` explicitly.
+You can also run `python -m mediaworker local` inside a manually configured environment. Local mode does not load the default `.env`, register a node, or claim remote jobs. For the portable launcher edit `.env.portable.local`, or pass an explicit `--env-file` for your model paths.
 
 The server binds to loopback only. Once dependencies and weights are installed, image inference runs on the host; video downloads require internet access. Do not expose the local workbench through a public reverse proxy.
 
@@ -125,13 +115,14 @@ Local face swap needs the identity model, a swap model, and the detector. Enhanc
 
 Deploy a backend that implements the matching authentication, task queue, lease, and storage API. This repository provides the compute node, not a complete hosted service or a general-purpose queue server.
 
-After installing the runtime and models, copy `.env.example` to `.env` and configure your API URL, node identity, authentication, and capabilities. Keep the real configuration private.
+After portable installation, fill `.env.portable` with the administrator-provided Worker API URL, permanent account credentials and allowed capabilities. Each machine/account needs a unique stable node ID and separate runtime/token paths. The offline doctor does not authenticate; the explicit foreground start command does:
 
 ```bash
-python -m mediaworker run --all-capabilities
+python3.13 scripts/setup-worker.py doctor --mode distributed --env-file .env.portable --load-models
+python3.13 scripts/setup-worker.py start --mode distributed --env-file .env.portable
 ```
 
-One instance can provide all four tools. Three image pollers and one download poller share **at most three execution slots**, with **one download at a time**. Model locks and hardware can further limit simultaneous inference. Enable only capabilities supported by that machine.
+Windows can use `setup-worker.ps1` with the same arguments. The portable launcher enables loaded capabilities intersected with server authorization; it does not let an unavailable enhancement engine block other usable tools. Manually managed GPU deployments can retain the strict `python -m mediaworker run --all-capabilities` entry. Three image pollers and one download poller share **at most three execution slots**, with **one download at a time**. Model locks and hardware can further limit simultaneous inference.
 
 Nodes initiate outbound connections and use presigned URLs to retrieve inputs and upload results. They do not need database credentials, storage access keys, or an inbound listening port. Leases, heartbeats, and stale-attempt checks prevent expired attempts from publishing results.
 
@@ -139,6 +130,7 @@ Local face swap accepts full photos and performs detection and blending itself. 
 
 ## Documentation and development
 
+- [Cross-platform installation, doctor and manual start](docs/portable-setup.md)
 - [Local deployment and model paths](docs/local-mode.md)
 - [Distributed nodes, GPU setup, and authentication](docs/distributed-mode.md)
 - [Download queue integration](docs/download-queue.md) and [download policy](docs/download-policy.md)

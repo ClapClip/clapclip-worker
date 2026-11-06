@@ -59,6 +59,10 @@ class Workbench:
         for tool in TOOLS:
             if self.closing.is_set():
                 return
+            if tool not in self.cfg.capabilities:
+                with self.lock:
+                    self.states[tool] = "unavailable"
+                continue
             try:
                 engine = LocalFaceSwap(self.cfg) if tool == "faceswap" else ENGINE_FACTORIES[tool](self.cfg)
                 engine.load()

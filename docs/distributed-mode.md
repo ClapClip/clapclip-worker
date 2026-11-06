@@ -2,6 +2,8 @@
 
 节点主动连接自己的 Worker API，通过预签名地址下载输入、上传结果，不需要数据库账号、AWS密钥或入站端口。后台需自行部署匹配的认证、任务、租约与存储协议。
 
+首次部署优先使用[跨平台安装、离线 doctor 和手动启动](portable-setup.md)，同一套逻辑适用于 Windows、macOS 和 Linux。它生成独立节点/状态目录，保留已有配置，默认不登录、不下载模型、不启动或设置自启。下面的 DirectML/后台管理命令用于明确选择该部署方式的管理员，不是 portable 安装器的默认步骤。
+
 ## Windows：一个实例提供四项能力
 
 使用 Python 3.13、Git、Node.js 22+、FFmpeg 和 FFprobe。先建立新的 DirectML 环境：
@@ -40,7 +42,9 @@ Get-ScheduledTask -TaskName MediaWorker
 
 ## macOS / Linux
 
-Python 3.13 环境安装 `pip install -e '.[downloader]'`，复制并填写 `.env` 后运行 `python -m mediaworker run --all-capabilities`。只在 `CAPABILITIES` 启用本机支持且装齐模型的能力；macOS目前不支持增强引擎。macOS可使用 `bash scripts/install-mac.sh` 安装登录后常驻服务，`bash scripts/uninstall-mac.sh` 移除该服务。Linux使用自己的服务管理器管理同一入口。
+使用普通原生 Python 3.13，运行 `bash scripts/setup-worker.sh install`、`bash scripts/setup-worker.sh doctor --load-models`；填写独立的 `.env.portable` 后，明确运行 `bash scripts/setup-worker.sh start --mode distributed --env-file .env.portable` 才会连接私有队列。平台、wheel 与系统工具要求见[支持矩阵](portable-setup.md#支持范围)。按实际加载结果及服务端授权启用能力；CPU/CoreML 不满足当前增强引擎的 DirectML/CUDA 要求。
+
+旧入口 `bash scripts/install-mac.sh` 现在只调用共享安装器，**不再安装或启动 LaunchAgent**。`scripts/uninstall-mac.sh` 仅供主动移除历史 LaunchAgent，不参与新安装。后台服务需要管理员另行选择并授权，安装成功不能当作已常驻或已上线。
 
 ## 增强模型
 

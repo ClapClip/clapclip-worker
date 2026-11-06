@@ -18,7 +18,8 @@ dependencies = [
   "pillow>=10.0",
   "numpy>=1.26",
   "opencv-python>=4.9",
-  "onnxruntime>=1.17; sys_platform != 'win32'",
+  "onnxruntime>=1.17,<1.24; sys_platform == 'darwin'",
+  "onnxruntime>=1.17; sys_platform != 'win32' and sys_platform != 'darwin'",
   "insightface>=2.0",
   "pycognito>=2024.5.1",
 ]
