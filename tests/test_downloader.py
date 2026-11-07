@@ -18,9 +18,9 @@ VIDEO = "https://www.youtube.com/watch?v=publicvideo"
 
 def source_info():
     return {"title": "A public video", "duration": 12, "formats": [
-        {"format_id": "18", "ext": "mp4", "protocol": "https", "width": 640, "height": 360, "vcodec": "avc1", "acodec": "mp4a", "filesize": 100},
-        {"format_id": "137", "ext": "mp4", "protocol": "https", "width": 854, "height": 480, "vcodec": "avc1", "acodec": "none", "filesize": 200},
-        {"format_id": "140", "ext": "m4a", "protocol": "https", "vcodec": "none", "acodec": "mp4a", "abr": 128, "filesize": 50},
+        {"format_id": "18", "url": "https://media.example.invalid/18", "ext": "mp4", "protocol": "https", "width": 640, "height": 360, "vcodec": "avc1", "acodec": "mp4a", "filesize": 100},
+        {"format_id": "137", "url": "https://media.example.invalid/137", "ext": "mp4", "protocol": "https", "width": 854, "height": 480, "vcodec": "avc1", "acodec": "none", "filesize": 200},
+        {"format_id": "140", "url": "https://media.example.invalid/140", "ext": "m4a", "protocol": "https", "vcodec": "none", "acodec": "mp4a", "abr": 128, "filesize": 50},
     ]}
 
 
@@ -241,6 +241,53 @@ for attempt in (lambda: socket.socket().connect(('127.0.0.1', 80)), lambda: sock
         for stderr, expected in cases.items():
             with self.subTest(stderr=stderr):
                 self.assertEqual(_extractor_failure_code(stderr), expected)
+
+    def test_real_timeout_cancel_and_overflow_preserve_the_execution_phase(self):
+        proxy = type("Proxy", (), {"port":12345,"url":"http://worker:local@127.0.0.1:12345"})()
+        runner = ProcessRunner(Config(), proxy)
+        cases = (
+            ("info", "TIMEOUT", "TIMEOUT", "import time;time.sleep(10)", 0.1, False, 1024),
+            ("download_source", "CANCELLED", "CANCELLED", "import time;time.sleep(10)", 2, True, 1024),
+            ("transcode", "MEDIA_UNAVAILABLE", "PROCESS_OUTPUT_LIMIT", "print('x'*10000)", 2, False, 100),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            for phase, code, diagnostic, script, timeout, cancelled, limit in cases:
+                with self.subTest(phase=phase):
+                    cancel = threading.Event()
+                    if cancelled: cancel.set()
+                    with self.assertRaises(ServiceError) as caught:
+                        runner.run([sys.executable,"-c",script],Path(temporary),cancel,timeout,
+                                   output_limit=limit,failure_phase=phase)
+                    self.assertEqual((caught.exception.code,caught.exception.diagnostic_code,
+                                      caught.exception.phase),(code,diagnostic,phase))
+
+    def test_process_start_and_invalid_json_have_fixed_diagnostics_without_source_text(self):
+        proxy = type("Proxy", (), {"port":12345,"url":"http://worker:local@127.0.0.1:12345"})()
+        runner = ProcessRunner(Config(), proxy)
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch("mediaworker.downloader.worker.subprocess.Popen",side_effect=OSError("https://source.invalid/?token=private")):
+                with self.assertRaises(ServiceError) as start:
+                    runner.run(["missing"],Path(temporary),threading.Event(),2,failure_phase="output_probe")
+            self.assertEqual((start.exception.phase,start.exception.diagnostic_code),
+                             ("output_probe","LOCAL_PROCESS_FAILED"))
+            self.assertNotIn("source.invalid",str(start.exception))
+            with patch.object(runner,"run",return_value="https://source.invalid/?token=private"):
+                with self.assertRaises(ServiceError) as parse:
+                    runner.inspect("https://example.invalid",Path(temporary),threading.Event())
+            self.assertEqual((parse.exception.phase,parse.exception.diagnostic_code),
+                             ("info","INVALID_SOURCE_JSON"))
+            self.assertNotIn("source.invalid",str(parse.exception))
+
+    def test_local_exit_diagnostics_preserve_input_probe_transcode_and_output_probe(self):
+        proxy = type("Proxy", (), {"port":12345,"url":"http://worker:local@127.0.0.1:12345"})()
+        runner = ProcessRunner(Config(), proxy)
+        with tempfile.TemporaryDirectory() as temporary:
+            for phase in ("probe","transcode","output_probe"):
+                with self.subTest(phase=phase), self.assertRaises(ServiceError) as caught:
+                    runner.run([sys.executable,"-c","raise SystemExit(1)"],Path(temporary),
+                               threading.Event(),2,failure_phase=phase)
+                self.assertEqual((caught.exception.phase,caught.exception.diagnostic_code),
+                                 (phase,"LOCAL_PROCESS_FAILED"))
 
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg/ffprobe not installed")

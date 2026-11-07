@@ -26,6 +26,8 @@ info JSON中的duration保留来源时长，结果<=512KiB。info complete仍w=1
 
 ## 传输与保护
 
+媒体任务仅复用本次 attempt 刚解析并重新核对所选组件的最终 video 元数据；组件下载不再重新提取网页，失效时失败闭合，不回退到排队时的旧 URL 或隐式网页刷新。跨进程数据按必要字段白名单重建，移除 cookies、认证头、额外 URL、执行状态及路径；signed URL 只留在当前 attempt 的最多 8MiB 私有临时 JSON，成功、失败、取消时均清理，不入队列、日志或发布包。组件仍走受控 native downloader，HTTP 分块及必要 HLS/DASH 字段保留，FFmpeg 只处理本地文件；自定义 AES/downloader 覆盖不进入此桥接。超时诊断区分 info、download_source、probe、transcode 和 output_probe，既有超时及输出规则不变。
+
 媒体源文件、中间文件、结果及其上传均没有应用固定字节上限，格式列表无大小提示；旧DOWNLOAD_MAX_BYTES/MAX_DURATION/MAX_WIDTH/MAX_HEIGHT环境值不再消费，也不换成更大的隐藏上限。允许在任务bounds中合法收紧尺寸/时长，与本地旧环境策略无关。
 
 HTTP decoded元数据及HTTPError正文每响应<=8MiB，子进程stdout/stderr合计<=8MiB，info JSON结果<=512KiB，三者分别保留。只有HttpFD媒体/fragment文件流不受元数据读取上限约束，不依赖来源Content-Type；inspection proxy有界，进入媒体阶段才解除媒体隧道体积限制。SSRF、公网DNS/连接pinning、来源准入、认证、socket并发、超时、限速、租约/fencing/ACK、取消清理和共享三槽/下载一个poller保留。来源由受控native yt-dlp下载，ffmpeg只读本地文件；超长/慢来源仍可超时，不承诺只向源站请求前300秒字节。

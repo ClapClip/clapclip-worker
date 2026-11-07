@@ -75,6 +75,28 @@ class QueueEngineTests(unittest.TestCase):
                 raise
         self.proxy_mock.return_value.close.assert_called_once()
 
+    def test_download_reinspection_timeout_reports_info_instead_of_media_transfer(self):
+        error = ServiceError("TIMEOUT", "safe timeout", 422)
+        error.phase, error.diagnostic_code = "info", "TIMEOUT"
+        self.runner_mock.download.side_effect = error
+        ctx = self.ctx("download")
+        ctx.params["option"] = {"public":{"ext":"mp4"},"components":["18"],"audio":False}
+        with self.assertRaises(RuntimeError) as caught: self.engine.run(ctx)
+        report = self.engine.failure_report(caught.exception, ctx.params)
+        self.assertEqual((report.message,report.phase,report.diagnostic_code),
+                         ("TIMEOUT","info","TIMEOUT"))
+        self.assertFalse(report.include_traceback)
+
+    def test_new_local_phases_are_allowlisted_without_leaking_exception_text(self):
+        for phase in ("transcode","output_probe"):
+            with self.subTest(phase=phase):
+                error = RuntimeError("https://signed.invalid/?token=private")
+                error.phase, error.diagnostic_code = phase, "LOCAL_PROCESS_FAILED"
+                report = self.engine.failure_report(error, {"operation":"download"})
+                self.assertEqual((report.message,report.phase,report.diagnostic_code),
+                                 ("MEDIA_UNAVAILABLE",phase,"LOCAL_PROCESS_FAILED"))
+                self.assertFalse(report.include_traceback)
+
     def test_download_reuses_progress_cancellation_and_container_type(self):
         ctx = self.ctx("download")
         self.runner_mock.inspect.return_value = {"duration": 30, "formats": [

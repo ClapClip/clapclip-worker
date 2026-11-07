@@ -15,6 +15,7 @@ import uuid
 
 from .safety import ServiceError, hostname
 from .policy import DOWNLOAD_POLICY_VERSION, DOWNLOAD_LIMITS
+from .fresh_metadata import encode_component
 
 PROTOCOLS = {"http", "https", "m3u8_native", "http_dash_segments"}
 FORMAT_ID = re.compile(r"[A-Za-z0-9_.-]{1,100}\Z")
@@ -215,6 +216,8 @@ def stop_process(process):
 def _extractor_failure_code(stderr):
     """Return a reviewed category; never expose extractor output in logs or APIs."""
     text = stderr.casefold()
+    if "clapclip_reextract_disabled" in text or "clapclip_fresh_metadata_invalid" in text:
+        return "INVALID_FRESH_METADATA"
     if re.search(r"destination unavailable|proxy authentication|required proxy|proxy error.{0,80}403", text):
         return "EGRESS_REJECTED"
     if re.search(r"\b429\b|too many requests|rate.?limit", text):
@@ -268,7 +271,10 @@ class ProcessRunner:
                                        start_new_session=os.name != "nt",
                                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         except OSError:
-            raise ServiceError("SERVICE_UNAVAILABLE", "The download engine is unavailable.", 503) from None
+            error = ServiceError("SERVICE_UNAVAILABLE", "The download engine is unavailable.", 503)
+            error.phase = failure_phase
+            error.diagnostic_code = "LOCAL_PROCESS_FAILED"
+            raise error from None
         chunks, stderr_tail, total, overflow = [], bytearray(), [0], threading.Event()
 
         def reader(stream, save):
@@ -299,6 +305,11 @@ class ProcessRunner:
         readers = [threading.Thread(target=reader, args=(process.stdout, True), daemon=True), threading.Thread(target=reader, args=(process.stderr, False), daemon=True)]
         for thread in readers:
             thread.start()
+        def output_overflow():
+            error = ServiceError("MEDIA_UNAVAILABLE", "The source returned too much data.", 422)
+            error.diagnostic_code = "PROCESS_OUTPUT_LIMIT"
+            return error
+
         deadline = time.monotonic() + timeout
         try:
             while process.poll() is None:
@@ -307,12 +318,12 @@ class ProcessRunner:
                 if time.monotonic() > deadline:
                     raise ServiceError("TIMEOUT", "This video took too long to process. Try a shorter video.", 422)
                 if overflow.is_set():
-                    raise ServiceError("MEDIA_UNAVAILABLE", "The source returned too much data.", 422)
+                    raise output_overflow()
                 time.sleep(0.1)
             for thread in readers:
                 thread.join(timeout=2)
             if overflow.is_set():
-                raise ServiceError("MEDIA_UNAVAILABLE", "The source returned too much data.", 422)
+                raise output_overflow()
             if process.returncode:
                 error = ServiceError("MEDIA_UNAVAILABLE", "This video is unavailable, restricted, or not supported by the source right now.", 422)
                 error.diagnostic_code = (
@@ -323,6 +334,10 @@ class ProcessRunner:
                 error.phase = failure_phase
                 raise error
             return b"".join(chunks).decode("utf-8", "replace")
+        except ServiceError as error:
+            error.phase = failure_phase
+            error.diagnostic_code = getattr(error, "diagnostic_code", error.code)
+            raise
         finally:
             stop_process(process)
             for thread in readers:
@@ -333,7 +348,10 @@ class ProcessRunner:
         try:
             return json.loads(raw)
         except (ValueError, TypeError):
-            raise ServiceError("MEDIA_UNAVAILABLE", "The source did not return a supported video.", 422) from None
+            error = ServiceError("MEDIA_UNAVAILABLE", "The source did not return a supported video.", 422)
+            error.phase = "info"
+            error.diagnostic_code = "INVALID_SOURCE_JSON"
+            raise error from None
 
     def download(self, job, media, option, directory, update):
         info = self.inspect(media["url"], directory, job["cancel"])
@@ -361,17 +379,31 @@ class ProcessRunner:
 
             selector = "/".join(f"{component}[protocol={protocol}]" for protocol in sorted(PROTOCOLS))
             target = directory / f"source-{index}.media"
-            self.run(self.base_args() + ["--no-simulate", "--no-part", "--no-continue", "--no-overwrites",
-                     "--format", selector, "--output", str(target), "--newline", "--progress", "--progress-delta", "0.5",
-                     "--progress-template", "download:progress:%(progress._percent_str)s", "--", media["url"]],
-                     directory, job["cancel"], max(1, deadline - time.monotonic()), progress, failure_phase="download_source")
+            metadata_path = directory / (".fresh-component-" + uuid.uuid4().hex + ".json")
+            try:
+                try:
+                    payload = encode_component(info, component)
+                except (ValueError, TypeError):
+                    error = ServiceError("MEDIA_UNAVAILABLE", "The selected source metadata could not be used.", 422)
+                    error.phase, error.diagnostic_code = "download_source", "INVALID_FRESH_METADATA"
+                    raise error from None
+                descriptor = os.open(metadata_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(descriptor, "wb") as stream:
+                    stream.write(payload)
+                self.run(self.base_args() + ["--no-simulate", "--no-part", "--no-continue", "--no-overwrites",
+                         "--format", selector, "--output", str(target), "--newline", "--progress", "--progress-delta", "0.5",
+                         "--progress-template", "download:progress:%(progress._percent_str)s",
+                         "--clapclip-info-json", str(metadata_path), "--clapclip-component", component],
+                         directory, job["cancel"], max(1, deadline - time.monotonic()), progress, failure_phase="download_source")
+            finally:
+                metadata_path.unlink(missing_ok=True)
             if not target.is_file() or target.stat().st_size == 0:
                 raise ServiceError("MEDIA_UNAVAILABLE", "The source did not provide a downloadable file.", 422)
             files.append(target)
         update("processing", 90)
         # Protocol + demuxer allowlists prohibit HTTP, HLS, concat and file-playlist indirection.
         input_options = ["-protocol_whitelist", "file,pipe", "-format_whitelist", "mov,matroska,webm,mpegts,mp3,ogg,aac"]
-        probe = self.run([self.config.ffprobe, "-v", "error", *input_options, "-show_entries", "format=duration:stream=codec_type", "-of", "json", str(files[0])], directory, job["cancel"], min(15, max(1, deadline - time.monotonic())))
+        probe = self.run([self.config.ffprobe, "-v", "error", *input_options, "-show_entries", "format=duration:stream=codec_type", "-of", "json", str(files[0])], directory, job["cancel"], min(15, max(1, deadline - time.monotonic())), failure_phase="probe")
         try:
             details = json.loads(probe)
             duration = float(details.get("format", {}).get("duration", 0))
@@ -409,13 +441,13 @@ class ProcessRunner:
         # output bound using ffprobe; never silently tolerate an overlong file.
         command += ["-ss", "0", "-t", str(self.config.max_duration - 0.1)]
         command += [str(target)]
-        self.run(command, directory, job["cancel"], max(1, deadline - time.monotonic()))
+        self.run(command, directory, job["cancel"], max(1, deadline - time.monotonic()), failure_phase="transcode")
         if not target.is_file() or target.stat().st_size <= 0:
             raise ServiceError("MEDIA_UNAVAILABLE", "The source did not produce a playable file.", 422)
         output_probe = self.run([self.config.ffprobe, "-v", "error", *input_options,
                                  "-show_entries", "format=duration:stream=codec_type,width,height,duration,sample_aspect_ratio:stream_tags=rotate:stream_side_data=rotation",
                                  "-of", "json", str(target)], directory, job["cancel"],
-                                min(15, max(1, deadline - time.monotonic())))
+                                min(15, max(1, deadline - time.monotonic())), failure_phase="output_probe")
         try:
             final = json.loads(output_probe)
             final_duration = float(final.get("format", {}).get("duration", 0))

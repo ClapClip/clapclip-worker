@@ -42,7 +42,7 @@ def queue_failure_report(task_type: str, error: Exception, params: dict) -> Fail
     # Extractor/S3 exceptions can contain credentials or signed URLs. Only
     # reviewed categories reach the public download queue or diagnostics.
     phase = getattr(error, "phase", params.get("operation", "download"))
-    if phase not in {"info", "download", "download_source", "process", "probe"}:
+    if phase not in {"info", "download", "download_source", "process", "probe", "transcode", "output_probe"}:
         phase = "process"
     reason = getattr(error, "diagnostic_code", str(error))
     if not _safe_error_code(reason):

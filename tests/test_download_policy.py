@@ -27,9 +27,9 @@ from mediaworker.models import ClaimedJob
 
 OBSOLETE_LIMITS = dict(DOWNLOAD_LIMITS, version=1, maxBytes=50*1024**2, maxHeight=480, maxWidth=854, maxDuration=180)
 URL = 'https://www.youtube.com/watch?v=offline'
-VIDEO = {'format_id': 'video', 'ext': 'mp4', 'protocol': 'https', 'width': 1920,
+VIDEO = {'format_id': 'video', 'url': 'https://media.example.invalid/video', 'ext': 'mp4', 'protocol': 'https', 'width': 1920,
          'height': 1080, 'vcodec': 'h264', 'acodec': 'none', 'filesize': 80 * 1024**2}
-AUDIO = {'format_id': 'audio', 'ext': 'm4a', 'protocol': 'https', 'vcodec': 'none', 'acodec': 'aac'}
+AUDIO = {'format_id': 'audio', 'url': 'https://media.example.invalid/audio', 'ext': 'm4a', 'protocol': 'https', 'vcodec': 'none', 'acodec': 'aac'}
 
 
 def current_config(**overrides):

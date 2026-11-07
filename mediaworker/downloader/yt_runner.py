@@ -9,6 +9,57 @@ import socket
 import subprocess
 import sys
 import threading
+import re
+
+def download_fresh(arguments):
+    """Use one already resolved component; never re-extract an expiring page."""
+    import yt_dlp
+    from yt_dlp.globals import plugin_dirs
+    from yt_dlp.utils import DownloadError
+    if __package__:
+        from .fresh_metadata import read_component
+    else:
+        from fresh_metadata import read_component
+
+    args = list(arguments)
+    values = {}
+    for flag in ("--clapclip-info-json", "--clapclip-component"):
+        if args.count(flag) != 1:
+            raise ValueError("INVALID_FRESH_METADATA")
+        index = args.index(flag)
+        if index + 1 >= len(args):
+            raise ValueError("INVALID_FRESH_METADATA")
+        values[flag] = args[index + 1]
+        del args[index:index + 2]
+    path = Path(values["--clapclip-info-json"])
+    if (path.is_symlink() or path.resolve().parent != Path.cwd().resolve()
+            or not re.fullmatch(r"\.fresh-component-[0-9a-f]{32}\.json", path.name)):
+        raise ValueError("INVALID_FRESH_METADATA")
+    info = read_component(path, values["--clapclip-component"])
+    parsed = yt_dlp.parse_options(args)
+    if parsed.urls:
+        raise ValueError("INVALID_FRESH_METADATA")
+    options = parsed.ydl_opts
+    template = options.get("outtmpl", {}).get("default")
+    if (not isinstance(template, str) or Path(template).resolve().parent != Path.cwd().resolve()
+            or Path(template).name not in {"source-0.media", "source-1.media"}):
+        raise ValueError("INVALID_FRESH_METADATA")
+    # CLI _real_main normally initializes this global before YoutubeDL does.
+    # The controlled API entry must disable plugins explicitly as well.
+    plugin_dirs.value = []
+    options.update({"remote_components": set(), "cookiefile": None,
+                    "cookiesfrombrowser": None, "outtmpl": {"default": template},
+                    "noplaylist": True})
+
+    class FreshYoutubeDL(yt_dlp.YoutubeDL):
+        def extract_info(self, *args, **kwargs):
+            raise DownloadError("CLAPCLIP_REEXTRACT_DISABLED")
+
+    with FreshYoutubeDL(options) as ydl:
+        ydl.process_ie_result(info, download=True)
+        if ydl._download_retcode:
+            raise DownloadError("CLAPCLIP_FRESH_DOWNLOAD_FAILED")
+
 
 
 def install_response_limits(max_metadata_bytes=8 * 1024 * 1024):
@@ -104,4 +155,10 @@ if __name__ == "__main__":
     if os.environ.get("CLAPCLIP_DOWNLOAD_POLICY_VERSION") != "2":
         raise SystemExit("Current download policy marker required")
     install_response_limits()
-    yt_dlp.main()
+    if "--clapclip-info-json" in sys.argv[1:]:
+        try:
+            download_fresh(sys.argv[1:])
+        except ValueError:
+            raise SystemExit("CLAPCLIP_FRESH_METADATA_INVALID") from None
+    else:
+        yt_dlp.main()
