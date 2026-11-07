@@ -21,9 +21,6 @@ jobs:
           - runner: macos-26
             system: Darwin
             machine: arm64
-          - runner: macos-15-intel
-            system: Darwin
-            machine: x86_64
           - runner: ubuntu-24.04
             system: Linux
             machine: x86_64

@@ -41,17 +41,34 @@ class DeploymentTests(unittest.TestCase):
         with patch.object(deployment.sys, "platform", "linux"), patch.object(deployment.platform, "libc_ver", return_value=("musl", "1.2")):
             self.assertIn("musl", deployment.platform_problem())
 
-    def test_macos_intel_native_and_rosetta_are_distinguished(self):
+    def test_macos_accepts_native_m_series_python(self):
+        with patch.object(deployment.sys, "platform", "darwin"), \
+             patch.object(deployment.platform, "machine", return_value="arm64"), \
+             patch.object(deployment.platform, "mac_ver", return_value=("13.7", (), "")), \
+             patch.object(deployment.subprocess, "run", return_value=SimpleNamespace(stdout="0")):
+            self.assertIsNone(deployment.platform_problem())
+
+    def test_macos_rejects_intel_without_suggesting_a_python_install(self):
         with patch.object(deployment.sys, "platform", "darwin"), \
              patch.object(deployment.platform, "machine", return_value="x86_64"), \
              patch.object(deployment.platform, "mac_ver", return_value=("13.7", (), "")), \
              patch.object(deployment.subprocess, "run", return_value=SimpleNamespace(stdout="0")):
-            self.assertIsNone(deployment.platform_problem())
+            self.assertIn("Intel Macs are not supported", deployment.platform_problem())
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                directory = root / "must-not-create"
+                with self.assertRaisesRegex(SystemExit, "Intel Macs are not supported"):
+                    deployment.install(root, directory)
+                self.assertFalse(directory.exists())
+
+    def test_macos_rejects_rosetta_with_native_python_instructions(self):
         with patch.object(deployment.sys, "platform", "darwin"), \
              patch.object(deployment.platform, "machine", return_value="x86_64"), \
              patch.object(deployment.platform, "mac_ver", return_value=("15.0", (), "")), \
              patch.object(deployment.subprocess, "run", return_value=SimpleNamespace(stdout="1")):
-            self.assertIn("Rosetta", deployment.platform_problem())
+            message = deployment.platform_problem()
+            self.assertIn("Rosetta", message)
+            self.assertIn("natively as arm64", message)
 
     def test_configuration_does_not_read_default_dotenv_or_inherit_another_identity(self):
         with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {

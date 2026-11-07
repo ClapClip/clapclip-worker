@@ -40,9 +40,9 @@ Get-ScheduledTask -TaskName MediaWorker
 
 就绪信息在 `logs/mediaworker.log`，监督日志为 `logs/supervisor-run.log`。四项 `capability ready` 和四个 `worker ... online` 表示启动完成；成功HTTP轮询默认不写日志，日志静默不等于掉线。启动就绪不证明真实媒体任务已成功。
 
-## macOS / Linux
+## macOS（仅 M 系列）/ Linux
 
-使用普通原生 Python 3.13，运行 `bash scripts/setup-worker.sh install`、`bash scripts/setup-worker.sh doctor --load-models`；填写独立的 `.env.portable` 后，明确运行 `bash scripts/setup-worker.sh start --mode distributed --env-file .env.portable` 才会连接私有队列。平台、wheel 与系统工具要求见[支持矩阵](portable-setup.md#支持范围)。按实际加载结果及服务端授权启用能力；CPU/CoreML 不满足当前增强引擎的 DirectML/CUDA 要求。
+使用普通原生 Python 3.13；Mac 仅支持 M 系列的原生 arm64 Python（universal2 也必须以 arm64 运行），拒绝 Intel 与 Rosetta。运行 `bash scripts/setup-worker.sh install`、`bash scripts/setup-worker.sh doctor --load-models`；填写独立的 `.env.portable` 后，明确运行 `bash scripts/setup-worker.sh start --mode distributed --env-file .env.portable` 才会连接私有队列。平台、wheel 与系统工具要求见[支持矩阵](portable-setup.md#支持范围)。按实际加载结果及服务端授权启用能力；CPU/CoreML 不满足当前增强引擎的 DirectML/CUDA 要求。
 
 旧入口 `bash scripts/install-mac.sh` 现在只调用共享安装器，**不再安装或启动 LaunchAgent**。`scripts/uninstall-mac.sh` 仅供主动移除历史 LaunchAgent，不参与新安装。后台服务需要管理员另行选择并授权，安装成功不能当作已常驻或已上线。
 

@@ -9,10 +9,9 @@
 | 系统与架构 | 安装组合 | 能力边界 |
 | --- | --- | --- |
 | Windows 10/11 x64 | CPython 3.13 x64、CPU ONNX Runtime | 换脸、抠图、下载；增强使用另外的 DirectML/CUDA 环境 |
-| macOS 13+ Apple Silicon | 原生 arm64/universal2 CPython 3.13 | 换脸、抠图、下载；可用 provider 以 doctor 为准 |
-| macOS 13+ Intel | 原生 x86_64/universal2 CPython 3.13 | 同上；不使用仅提供 arm64 wheel 的最新 ORT |
+| macOS 13+ Apple Silicon M 系列 | arm64 CPython 3.13，或以原生 arm64 运行的 universal2 CPython 3.13 | 换脸、抠图、下载；可用 provider 以 doctor 为准 |
 | Linux x64 / ARM64 | CPython 3.13、glibc >=2.27，例如 Ubuntu 22.04+ | CPU 基线；增强需要另行配置并验证 CUDA |
-| Windows ARM64/32 位、Alpine/musl、其他架构/旧系统 | 不在此 wheel 组合内 | 安装器明确停止，不静默编译或承诺支持 |
+| Intel Mac、Rosetta Python、Windows ARM64/32 位、Alpine/musl、其他架构/旧系统 | 不在支持范围内 | 安装器明确停止，不静默编译或承诺支持 |
 
 CPU provider 能运行的引擎不等于 GPU 加速。macOS 的 CoreML provider 也不等于每个模型都在 GPU/ANE 上完整执行：ONNX Runtime 会按算子支持划分执行。**当前增强引擎只接受 DirectML/CUDA，CPU/CoreML 不满足要求。** 安装器不会改增强算法、放松 provider 门限，或安装 Windows GPU 库到 Mac。
 
@@ -22,12 +21,11 @@ CPU provider 能运行的引擎不等于 GPU 加速。macOS 的 CoreML provider 
 
 需要 Python 3.13；下载能力另外需要 **Node.js 22+、FFmpeg 和 FFprobe**，FFmpeg 应包含 `libx264/libvpx-vp9/aac/libopus/libmp3lame`。它们缺失只影响下载能力，不应阻止已就绪的图片引擎。安装器会提供修复入口，不自动执行 sudo、Homebrew、winget 或系统安装包。
 
-- **Apple Silicon**：从 [Homebrew](https://brew.sh) 安装包管理器后执行 `brew install python@3.13 ffmpeg node`。Homebrew 当前推荐 macOS 15+；macOS 13/14 用户可改用下面的官方安装入口，不能假定旧系统有 bottles。
-- **Intel Mac**：优先使用 [Python.org 的 universal2 安装器](https://www.python.org/downloads/macos/)、[Node.js 安装器](https://nodejs.org/en/download)和 [FFmpeg 官方列出的下载入口](https://ffmpeg.org/download.html)。Intel Homebrew 当前是 Tier 3，可能需要源码构建，不作为“一定一步安装成功”的前提。
+- **Mac（仅 M 系列）**：在未启用 Rosetta 的原生终端中，从 [Homebrew](https://brew.sh) 安装包管理器后执行 `brew install python@3.13 ffmpeg node`。Homebrew 当前推荐 macOS 15+；macOS 13/14 用户不要假定有 bottles。也可使用 [Python.org 的 arm64/universal2 安装器](https://www.python.org/downloads/macos/)，确保 Python 实际以 `arm64` 原生运行，搭配 [Node.js 安装器](https://nodejs.org/en/download)和 [FFmpeg 官方下载入口](https://ffmpeg.org/download.html)。Intel Mac 不支持，不提供 Intel 安装路径。
 - **Windows**：[Python.org](https://www.python.org/downloads/windows/) 安装普通 3.13 x64，[Node.js](https://nodejs.org/en/download) 安装 22+，从 [FFmpeg 下载页](https://ffmpeg.org/download.html)选择带 FFprobe 和上述编码器的构建。将工具的 `bin` 目录加入 PATH，然后重新打开终端。
 - **Linux**：使用发行版支持的 Python 3.13 / venv 安装方式，或 [Python 官方入口](https://www.python.org/downloads/source/)。Ubuntu/Debian 的媒体与 OpenCV 系统库：`sudo apt-get update && sudo apt-get install ffmpeg libgl1 libglib2.0-0`；如果发行版提供 `python3.13-venv` 则一并安装。Node.js 按官方入口安装 22+，不要默认发行版旧 Node 包已经满足要求。
 
-Mac 安装 Python.org 版本后，按官方说明运行安装目录中的 `Install Certificates.command`。不要替换系统 Python，也不要在 Apple Silicon 上通过 Rosetta 混装 x86_64 环境。
+M 系列 Mac 安装 Python.org 版本后，按官方说明运行安装目录中的 `Install Certificates.command`。不要替换系统 Python，也不要通过 Rosetta 混装 x86_64 环境；检测到 Rosetta 时先关闭终端的“使用 Rosetta 打开”，改用原生 arm64 Python 后重新创建独立环境，保留旧配置。
 
 ## 2. 一次安装，可安全重跑
 
@@ -111,12 +109,14 @@ Windows 同样使用 `setup-worker.ps1` 包装器传这些参数。已有安全�
 
 ## 验证边界与来源
 
-新增 CI 矩阵覆盖 Windows x64、macOS ARM64/Intel、Linux x64/ARM64 的真实安装、导入、doctor 及离线回归，包括临时生成的最小 ONNX 模型真实执行 CPU `Session.run` 并比对结果数组。它验证 native 运行库的基本执行，不代表实际换脸/抠图质量、商用模型兼容或 CoreML/GPU 加速。**workflow 已添加不等于 CI 已通过；wheel 可解析不等于 Mac 实机媒体推理成功。** 具体通过情况以对应提交的 CI 结果为准，不把旧提交或被取消的 CI 算作本次证据。
+CI 矩阵覆盖 Windows x64、macOS M 系列原生 ARM64、Linux x64/ARM64 的安装、导入、doctor 及离线回归，包括临时生成的最小 ONNX 模型真实执行 CPU `Session.run` 并比对结果数组；不再包含 Intel Mac。它验证 native 运行库的基本执行，不代表实际换脸/抠图质量、商用模型兼容或 CoreML/GPU 加速。**workflow 已添加不等于 CI 已通过；wheel 可解析不等于 M 系列 Mac 原生媒体推理成功。** 具体通过情况以对应提交的 CI 结果为准；作业排队未取得机器时，不能宣称 ARM64 已验收，也不把旧提交或被取消的 CI 算作本次证据。
+
+2026-11-07 的验证记录：此前 `b5104d1` 的 M 系列作业因 GitHub hosted ARM64 容量限制未取得机器，最终被取消，没有执行安装脚本。它不能作为 M 系列原生验收通过或脚本安装失败的证据；本次支持范围收口不改变这个验证边界。
 
 2026-11-06 核对的官方依据：
 
 - [PyPI ORT 1.23.2 文件](https://pypi.org/project/onnxruntime/1.23.2/#files)、[OpenCV 4.12.0.88](https://pypi.org/project/opencv-python/4.12.0.88/#files)、[NumPy 2.2.6](https://pypi.org/project/numpy/2.2.6/#files)、[InsightFace 2.0](https://pypi.org/project/insightface/2.0/#files)：普通 CPython 3.13 对应 wheel。
 - [Python macOS 官方安装说明](https://docs.python.org/3.13/using/mac.html)：universal2、证书配置及不要修改系统 Python。
-- [Homebrew 安装要求](https://docs.brew.sh/Installation)：当前系统及 Apple Silicon/Intel 支持层级。
+- [Homebrew 安装要求](https://docs.brew.sh/Installation)：当前系统及 Apple Silicon 支持条件。
 - [ONNX Runtime CoreML](https://onnxruntime.ai/docs/execution-providers/CoreML-ExecutionProvider.html)：provider 的要求与算子支持边界。
 - [GitHub runner 矩阵](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)：实际 OS/架构仍由 CI 断言核对，防止标签变更。

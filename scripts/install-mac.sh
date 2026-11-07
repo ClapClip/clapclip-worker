@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compatibility entry: install only. No LaunchAgent, autostart or task polling.
+# Apple Silicon M-series compatibility entry: install only; no autostart/polling.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [ "$(uname -s)" != Darwin ]; then

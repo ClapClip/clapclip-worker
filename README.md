@@ -49,13 +49,13 @@ Download processing can scale larger sources and trim longer recordings. There i
 
 ## Requirements and platform support
 
-The portable installer uses **ordinary native CPython 3.13** with pinned wheel dependencies: Windows x64, macOS 13+ Apple Silicon/Intel, and glibc Linux 2.27+ x64/ARM64. Other architectures, free-threaded Python and newer Python minors are checked explicitly rather than silently built from source. Downloads also need **FFmpeg, FFprobe, and Node.js 22+** on `PATH`.
+The portable installer uses **ordinary native CPython 3.13** with pinned wheel dependencies: Windows x64, macOS 13+ **Apple Silicon M-series only (native arm64)**, and glibc Linux 2.27+ x64/ARM64. Intel Macs and Rosetta Python are not supported. Other architectures, free-threaded Python and newer Python minors are checked explicitly rather than silently built from source. Downloads also need **FFmpeg, FFprobe, and Node.js 22+** on `PATH`.
 
 | Platform | Runtime notes |
 | --- | --- |
 | Windows | A pinned DirectML environment is provided. CUDA can be installed in a separate environment. |
 | Linux | Install a compatible ONNX Runtime provider. Image enhancement requires CUDA. |
-| macOS | The workbench can run supported tools, but the current image enhancement engine requires DirectML or CUDA and is unavailable on macOS. |
+| macOS / M-series | Use arm64 Python, or universal2 Python running natively as arm64. Intel/Rosetta is unsupported. The current enhancement engine requires DirectML/CUDA and is unavailable on macOS. |
 
 A GPU is required for the current enhancement engine. Other tools depend on their installed models and runtime; starting the web interface does not mean every tool is ready.
 

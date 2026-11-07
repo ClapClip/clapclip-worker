@@ -13,7 +13,7 @@
 
 ## 本地安装
 
-跨平台首次安装优先使用[统一安装器和 doctor](portable-setup.md)，使用普通原生 Python 3.13。下面保留人工配置 Windows DirectML 的路径；它与 portable CPU 环境分开，不能混装。
+跨平台首次安装优先使用[统一安装器和 doctor](portable-setup.md)，使用普通原生 Python 3.13。Mac 仅支持 M 系列原生 arm64，不支持 Intel 或 Rosetta。下面保留人工配置 Windows DirectML 的路径；它与 portable CPU 环境分开，不能混装。
 
 ```powershell
 # Windows / DirectML

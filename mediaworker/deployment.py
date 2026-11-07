@@ -37,12 +37,14 @@ def platform_problem() -> str | None:
         if arch not in {"amd64", "x86_64"} or sys.maxsize <= 2**32:
             return "Portable Windows wheels require x64 Python; Windows ARM64/32-bit is not covered."
     elif sys.platform == "darwin":
-        if arch not in {"arm64", "x86_64"} or tuple(map(int, platform.mac_ver()[0].split(".")[:1])) < (13,):
-            return "Use native Apple Silicon or Intel Python on macOS 13+."
         translated = subprocess.run(["/usr/sbin/sysctl", "-in", "sysctl.proc_translated"],
                                     capture_output=True, text=True, check=False)
         if translated.stdout.strip() == "1":
-            return "Rosetta Python detected. Reopen a native Terminal and install arm64/universal2 Python 3.13."
+            return "Rosetta Python detected. Reopen Terminal without Rosetta and run arm64 or universal2 Python 3.13 natively as arm64."
+        if arch != "arm64":
+            return "Intel Macs are not supported. macOS deployment requires an Apple Silicon M-series Mac with native arm64 Python."
+        if tuple(map(int, platform.mac_ver()[0].split(".")[:1])) < (13,):
+            return "Apple Silicon M-series deployment requires macOS 13+ and native arm64 Python 3.13."
     elif sys.platform.startswith("linux"):
         libc, version = platform.libc_ver()
         if arch not in {"x86_64", "aarch64", "arm64"} or libc != "glibc" or tuple(map(int, version.split(".")[:2])) < (2, 27):
@@ -58,9 +60,9 @@ def python_in(directory: Path) -> Path:
 
 def system_help() -> str:
     if sys.platform == "darwin":
-        return ("Apple Silicon: install Homebrew from https://brew.sh, then brew install python@3.13 ffmpeg node. "
-                "Intel: Python.org universal2 Python 3.13 + https://nodejs.org/en/download + FFmpeg/FFprobe "
-                "from https://ffmpeg.org/download.html. Homebrew Intel is Tier 3; do not assume bottles exist.")
+        return ("Apple Silicon M-series only: install Homebrew from https://brew.sh, then brew install python@3.13 ffmpeg node. "
+                "Alternatively use arm64/universal2 Python 3.13 from python.org, running natively as arm64, "
+                "Node.js 22+ from nodejs.org and FFmpeg/FFprobe from ffmpeg.org/download.html. Intel/Rosetta is not supported.")
     if sys.platform == "win32":
         return ("Install Python 3.13 x64 from python.org and Node.js 22+ from nodejs.org; "
                 "install FFmpeg with FFprobe and libx264/libvpx-vp9/aac/libopus/libmp3lame from ffmpeg.org/download.html. "
