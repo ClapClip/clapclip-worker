@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "notice": "Integrity/provenance only. Restricted operator-authorized delivery; preserve THIRD_PARTY.md. No commercial-license grant.",
+  "assets": {
+    "arcface_w600k_r50.onnx": {
+      "bytes": 174383860,
+      "sha256": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
+      "usage": "identity",
+      "source": "faceswap-models-v1.0.0",
+      "directory": "faceswap"
+    },
+    "inswapper_128_fp16.onnx": {
+      "bytes": 277680829,
+      "sha256": "c4eccca86ad177586c85c28bf1a64a9d9ed237e283a15818d831f7facfd3f420",
+      "usage": "swap",
+      "source": "faceswap-models-v1.0.0",
+      "directory": "faceswap"
+    },
+    "hyperswap_1a_256.onnx": {
+      "bytes": 402742682,
+      "sha256": "c0e98a8a03a238f461ed3d2570e426b49f46745ee400854a60dceeb70c246add",
+      "usage": "swap",
+      "source": "faceswap-models-v1.0.0",
+      "directory": "faceswap"
+    },
+    "hyperswap_1b_256.onnx": {
+      "bytes": 402742682,
+      "sha256": "5124031789c42f71b9558fb71954ef7aedb6da7ed9fac79293e23c61a792a73e",
+      "usage": "swap",
+      "source": "faceswap-models-v1.0.0",
+      "directory": "faceswap"
+    },
+    "hyperswap_1c_256.onnx": {
+      "bytes": 402742682,
+      "sha256": "5528c2d76fe9986c99d829278987ef9f3a630cb606db7628d02b57b330f406a5",
+      "usage": "swap",
+      "source": "faceswap-models-v1.0.0",
+      "directory": "faceswap"
+    },
+    "yoloface_8n.onnx": {
+      "bytes": 12639351,
+      "sha256": "84d5bb985b0ea75fc851d7454483897b1494c71c211759b4fec3a22ac196d206",
+      "usage": "detector",
+      "source": "operator-installed-detector",
+      "directory": "enhance"
+    },
+    "isnet-general-use.onnx": {
+      "bytes": 178648008,
+      "sha256": "60920e99c45464f2ba57bee2ad08c919a52bbf852739e96947fbb4358c0d964a",
+      "usage": "segmentation",
+      "source": "rembg-v0.0.0-pinned",
+      "directory": "cutout"
+    },
+    "RealESRGAN_x2plus_512_fp32.onnx": {
+      "bytes": 67076014,
+      "sha256": "427f448b372e377a03aaf00ce8c0abb64e289d9b880aa6bdaead0adb947b7945",
+      "usage": "standard",
+      "source": "operator-installed-enhance",
+      "directory": "enhance"
+    },
+    "span_liveaction_x2_704_fp16.onnx": {
+      "bytes": 838733,
+      "sha256": "7568a303e61660d26a8bcc1e10408f3ea52bba1274de70aa2dcca45c1e98a54a",
+      "usage": "fast",
+      "source": "operator-installed-enhance",
+      "directory": "enhance"
+    },
+    "nafnet_deblur_512_fp32.onnx": {
+      "bytes": 91736291,
+      "sha256": "d67d53691e24d9cfb5443b628f58c581ed1dec49be48736d43c718c658b37780",
+      "usage": "deblur",
+      "source": "operator-installed-enhance",
+      "directory": "enhance"
+    },
+    "realcugan-pro-conservative-up2x.onnx": {
+      "bytes": 5148695,
+      "sha256": "391a30605ca4101b54ff968728512b344ef277d8dbd1f686b12f0bf6c0c2d9e8",
+      "usage": "animation",
+      "source": "operator-installed-enhance",
+      "directory": "enhance"
+    },
+    "realcugan-conservative-up4x.onnx": {
+      "bytes": 5638021,
+      "sha256": "7c109b9ccac88044a129ef6065be3efd1c45b73c0815ff208da79383af67507a",
+      "usage": "animation",
+      "source": "operator-installed-enhance",
+      "directory": "enhance"
+    },
+    "gfpgan_1.4.onnx": {
+      "bytes": 340299087,
+      "sha256": "accc4757b26bdb89b32b4d3500d4f79c9dff97c1dd7c7104bf9dcb95e3311385",
+      "usage": "gfpgan",
+      "source": "operator-installed-enhance",
+      "directory": "enhance"
+    },
+    "gpen_bfr_256.onnx": {
+      "bytes": 75792988,
+      "sha256": "bad8bf0426873828df2dbf4e3b3d9ababba9da7965b8b72426569486f7ae5c25",
+      "usage": "gpen",
+      "source": "operator-installed-enhance",
+      "directory": "enhance"
+    }
+  }
+}

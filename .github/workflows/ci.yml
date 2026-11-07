@@ -30,7 +30,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes ffmpeg
-          python -m pip install -e '.[downloader,dev]'
+          python -m pip install -e '.[downloader,dev,managed]'
       - name: Run offline regression suite
         run: python -m unittest discover -s tests -v
       - name: Audit Python dependencies

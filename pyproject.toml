@@ -26,6 +26,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["build>=1.2", "pip-audit>=2.9"]
+managed = ["psutil==7.2.2"]
 downloader = ["yt-dlp[default]==2026.8.19"]
 windows-directml = ["onnxruntime-directml==1.22.0; sys_platform == 'win32'"]
 windows-cuda = [
@@ -55,3 +56,11 @@ include = ["mediaworker*"]
 
 [tool.setuptools.package-data]
 mediaworker = ["web/*.html", "web/*.css", "web/*.js"]
+"mediaworker.managed" = ["*.json"]
+
+[tool.setuptools.data-files]
+"share/clapclip-worker/scripts" = [
+  "scripts/install-worker.cmd", "scripts/install-worker.ps1",
+  "scripts/install-worker.sh", "scripts/install-worker.py",
+  "scripts/worker-control.py",
+]

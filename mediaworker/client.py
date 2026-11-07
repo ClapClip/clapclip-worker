@@ -102,6 +102,13 @@ class WorkerClient:
         job = ClaimResponse.model_validate(data).job
         if job:
             self._routes.bind(job)
+        observer = getattr(self, "poll_observer", None)
+        if observer is not None:
+            try:
+                observer(capabilities)
+            except Exception:
+                # An observation failure cannot discard an accepted claim.
+                log.warning("queue poll observation unavailable")
         return job
 
     async def complete(self, job_id: str, lease_token: str, result_key: str, width: int, height: int, *, duration: float | None = None) -> None:

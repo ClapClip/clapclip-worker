@@ -18,5 +18,6 @@ global-exclude *.zip *.whl *.tar.gz *.tgz *.7z *.bundle
 include .env.example .env.local.example README.md SECURITY.md
 include LICENSE THIRD_PARTY.md CONTRIBUTING.md
 include requirements-portable.txt requirements-unified-windows.txt
+include requirements-managed.txt
 recursive-include docs *.md
-recursive-include scripts *.py *.ps1 *.sh
+recursive-include scripts *.py *.ps1 *.sh *.cmd *.json

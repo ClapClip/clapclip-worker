@@ -1,6 +1,8 @@
 # 私有分布式部署
 
-节点主动连接自己的 Worker API，通过预签名地址下载输入、上传结果，不需要数据库账号、AWS密钥或入站端口。后台需自行部署匹配的认证、任务、租约与存储协议。
+节点只主动连接 Web-ClapClip 中央后台 `https://www.clapclip.net`，由它统一管理五站任务；Worker 不直连业务站 API。后台签发的存储链接使用独立匿名客户端下载输入、上传结果，不携带节点 token 或 cookie，不需要数据库账号、AWS密钥或入站端口。
+
+新的[无人值守安装候选](one-click-contract.md)实现无参安装、后台开机自启、整机单实例及排空更新。新 managed 配置只对接 Web-ClapClip 主后台，不直连业务站 API；主后台契约验收前明确停止安装。候选的本地验证不代表线上服务就绪，也不迁移现有手工配置或生产实例。
 
 首次部署优先使用[跨平台安装、离线 doctor 和手动启动](portable-setup.md)，同一套逻辑适用于 Windows、macOS 和 Linux。它生成独立节点/状态目录，保留已有配置，默认不登录、不下载模型、不启动或设置自启。下面的 DirectML/后台管理命令用于明确选择该部署方式的管理员，不是 portable 安装器的默认步骤。
 
@@ -16,7 +18,7 @@ Copy-Item .venv-unified\Scripts\python.exe .venv-unified\Scripts\ClapClipWoker.e
 Copy-Item .env.example .env
 ```
 
-编辑 `.env`：填写自己的 `API_BASE_URL`、节点身份和 Cognito 配置，或使用已有 `NODE_TOKEN`。启用 `CAPABILITIES=faceswap,cutout,enhance,download`，设置 `CONCURRENCY=3`。账号及节点需在后台获准使用相应能力。密码只保存在本机，勿放入命令行或提交。
+编辑 `.env`：保持 `API_BASE_URL=https://www.clapclip.net`，填写节点身份和匹配的 Cognito 配置，或使用本机已有 `NODE_TOKEN`。启用 `CAPABILITIES=faceswap,cutout,enhance,download`，设置 `CONCURRENCY=3`。账号及节点需在中央后台获准使用相应能力。密码只由 Cognito SDK 发送，中央后台收到 ID token；勿把密码放入命令行或提交。
 
 按[本地部署](local-mode.md#放置模型)准备换脸和抠图模型，增强模型见下表。首次启动可下载经过哈希验证的缺失换脸/抠图权重；使用自己的私有模型仓库时填写只读 `GITHUB_TOKEN`。公开模型仓库无需token。增强权重需自行安装。
 

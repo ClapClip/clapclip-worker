@@ -1,13 +1,20 @@
 # ClapClip Worker: Local AI Media Processing
 
-ClapClip Worker is an open source Python application for **photo face swap, background removal, image enhancement, and video and audio downloads**. Use its local web interface on your own computer, or run distributed worker nodes connected to a private task API.
+ClapClip Worker is an open source Python application for **photo face swap, background removal, image enhancement, and video and audio downloads**. Use its local web interface on your own computer, or run distributed worker nodes connected to the central Web-ClapClip backend at `https://www.clapclip.net`.
 
-The local workbench lets you upload images, choose a model, preview results, and save the output in your browser. Distributed mode uses the same processing engines to handle jobs from your own backend.
+The local workbench lets you upload images, choose a model, preview results, and save the output in your browser. Distributed mode uses the same processing engines for website queues managed by Web-ClapClip; Workers do not connect to individual business-site APIs.
 
 Distributed face swap also supports bounded animated GIF targets with explicit
 queue gating, identity matching and GIF output. See the [GIF contract](docs/faceswap-gif.md).
 
 [Cross-platform quick start](docs/portable-setup.md) · [Local setup](#local-web-interface) · [Distributed deployment](#private-distributed-workers) · [Model licenses](THIRD_PARTY.md)
+
+An [unattended managed-installation candidate](docs/one-click-contract.md) adds
+no-argument dependency setup, account/password-only enrollment, real boot startup,
+one Worker per machine and drained official-main updates. Its Web-ClapClip backend
+V1 contract passed local acceptance; deployed APIs, models and real-machine
+installation remain unverified, so it is not an online-ready installer. The
+existing local/manual installer below remains available.
 
 ## ClapClip websites
 
@@ -42,8 +49,8 @@ Download processing can scale larger sources and trim longer recordings. There i
 | --- | --- | --- |
 | Use it for | Processing images on your computer | Providing compute for your own application |
 | Entry point | `python -m mediaworker local` | `python -m mediaworker run --all-capabilities` |
-| Interface | Browser at `http://127.0.0.1:8765` | Your backend's task API |
-| Account | No account required | Node authentication provided by your backend |
+| Interface | Browser at `http://127.0.0.1:8765` | Central Web-ClapClip task API |
+| Account | No account required | Account and node authorized by Web-ClapClip |
 | Image processing | Runs on the local machine | Runs on the worker machine |
 | Backend required | No | Yes; the server is not included |
 
@@ -113,9 +120,9 @@ Local face swap needs the identity model, a swap model, and the detector. Enhanc
 
 ## Private distributed workers
 
-Deploy a backend that implements the matching authentication, task queue, lease, and storage API. This repository provides the compute node, not a complete hosted service or a general-purpose queue server.
+Distributed Workers use only `https://www.clapclip.net` for authentication, task queues, leases and storage authorization. This repository provides the compute node. The managed installer's central V1 contract passed local acceptance; local tests do not establish deployed APIs or online readiness.
 
-After portable installation, fill `.env.portable` with the administrator-provided Worker API URL, permanent account credentials and allowed capabilities. Each machine/account needs a unique stable node ID and separate runtime/token paths. The offline doctor does not authenticate; the explicit foreground start command does:
+After portable installation, keep `API_BASE_URL=https://www.clapclip.net` in `.env.portable` and fill the authorized permanent account credentials, matching Cognito configuration and allowed capabilities. Each machine/account needs a unique stable node ID and separate runtime/token paths. The offline doctor does not authenticate; the explicit foreground start command does:
 
 ```bash
 python3.13 scripts/setup-worker.py doctor --mode distributed --env-file .env.portable --load-models

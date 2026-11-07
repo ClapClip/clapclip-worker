@@ -33,7 +33,10 @@ def _install_signal_handlers(shutdown: asyncio.Event) -> None:
 
 
 async def run_forever(cfg: Config, *, require_all_engines: bool = False,
-                      available_only: bool = False) -> None:
+                      available_only: bool = False, shutdown: asyncio.Event | None = None,
+                      before_polling=None, poll_observer=None, register_node=None) -> None:
+    shutdown = shutdown if shutdown is not None else asyncio.Event()
+    _install_signal_handlers(shutdown)
     cfg.require_api()
     from .engine.registry import _mock_enabled
     from .model_registry import sync_models
@@ -57,7 +60,12 @@ async def run_forever(cfg: Config, *, require_all_engines: bool = False,
         # Only the portable foreground launcher opts into actual readiness.
         cfg.capabilities = list(registry)
         cfg.claim_capabilities = None
-    await bootstrap_node_token(cfg)
+    if shutdown.is_set():
+        return
+    if register_node is None:
+        await bootstrap_node_token(cfg)
+    else:
+        await register_node(cfg)
     if available_only:
         registry = {cap: engine for cap, engine in registry.items() if cap in cfg.capabilities}
         cfg.capabilities = list(registry)
@@ -66,13 +74,17 @@ async def run_forever(cfg: Config, *, require_all_engines: bool = False,
     missing_claims = sorted(set(cfg.claim_capabilities or []) - set(cfg.capabilities))
     if missing_claims:
         raise SystemExit("this runtime's claim capabilities are not authorized for the shared node: " + ", ".join(missing_claims))
+    if before_polling is not None:
+        await before_polling(cfg, registry, shutdown)
+    if shutdown.is_set():
+        return
     log.info("node %s starting (tier=%s, concurrency=%d, claims=%s)",
              cfg.node_id, cfg.trust_tier, cfg.concurrency, sorted(registry))
 
     with KeepAwake():
         async with WorkerClient(cfg) as client:
-            shutdown = asyncio.Event()
-            _install_signal_handlers(shutdown)
+            if poll_observer is not None:
+                client.poll_observer = poll_observer
             groups = runtime_capability_groups(cfg, list(registry))
             workers = [
                 asyncio.create_task(_worker_loop(i, cfg, client, registry, shutdown, group))

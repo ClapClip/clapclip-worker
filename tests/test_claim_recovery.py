@@ -68,6 +68,43 @@ class ClaimRecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(await client.claim(["faceswap"], ["hyperswap_256_b"]))
         self.assertEqual(calls, 2)
 
+    async def test_observation_failure_never_discards_an_accepted_claim(self):
+        payload = {"job": {"id": "a86eeb49-a664-4249-bfb7-20c6001be743",
+                   "lease_token": "d8c5b4a4-feb2-490a-a98d-f3965c91a47a", "attempt": 1,
+                   "task_type": "cutout", "inputs": {},
+                   "result": {"put_url": "https://offline.test/put", "key": "synthetic/result.png"}}}
+        async with WorkerClient(self.cfg) as client:
+            await client._http.aclose()
+            client._http = httpx.AsyncClient(base_url=self.cfg.api_base_url,
+                transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload)))
+            def broken_observer(_):
+                raise OSError("synthetic-secret-that-must-not-be-logged")
+            client.poll_observer = broken_observer
+            with self.assertLogs("mediaworker.client", level="WARNING") as logs:
+                claimed = await client.claim(["cutout"], ["synthetic"])
+            self.assertIsNotNone(claimed)
+            self.assertEqual(claimed.id, payload["job"]["id"])
+            self.assertNotIn("synthetic-secret", "\n".join(logs.output))
+
+    async def test_drain_finishes_accepted_job_without_another_claim(self):
+        shutdown = asyncio.Event()
+        entered, finished = asyncio.Event(), asyncio.Event()
+        sentinel = object()
+        client = SimpleNamespace(claim=AsyncMock(return_value=sentinel))
+        async def process(*_):
+            entered.set()
+            await finished.wait()
+        registry = {"cutout": SimpleNamespace(available_models=["synthetic"])}
+        with patch.object(runner, "_process_job", side_effect=process):
+            task = asyncio.create_task(runner._worker_loop(0, self.cfg, client, registry, shutdown))
+            await entered.wait()
+            shutdown.set()
+            await asyncio.sleep(0)
+            self.assertFalse(task.done())
+            finished.set()
+            await asyncio.wait_for(task, 1)
+        client.claim.assert_awaited_once()
+
     def test_backoff_is_exponential_bounded_and_jittered(self):
         with patch.object(runner.random, "uniform", return_value=1.0):
             self.assertEqual(

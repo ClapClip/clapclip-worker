@@ -1,0 +1,3 @@
+# Managed one-click installations keep their own fixed CPU/CoreML profile.
+-r requirements-portable.txt
+psutil==7.2.2

@@ -52,4 +52,5 @@ jobs:
       - name: Offline regression suite in the installed environment
         shell: bash
         run: |
+          python -c "from pathlib import Path; import subprocess,sys; p=Path('.venv-portable') / ('Scripts/python.exe' if sys.platform=='win32' else 'bin/python'); subprocess.check_call([str(p),'-m','pip','--isolated','install','--only-binary=:all:','psutil==7.2.2'])"
           python -c "from pathlib import Path; import subprocess,sys; p=Path('.venv-portable') / ('Scripts/python.exe' if sys.platform=='win32' else 'bin/python'); sys.exit(subprocess.call([str(p),'-B','-m','unittest','discover','-s','tests','-v']))"

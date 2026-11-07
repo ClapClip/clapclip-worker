@@ -80,7 +80,7 @@ def write_example(path: Path, node: str, *, local: bool) -> None:
              "CAPABILITIES=faceswap,cutout,download", "CONCURRENCY=3", "WORKER_AUTO_UPDATE=false",
              "FACESWAP_MODEL_AUTO_DOWNLOAD=false", "CUTOUT_MODEL_AUTO_DOWNLOAD=false"]
     if not local:
-        lines += ["# Use the Worker API origin, not necessarily the public website origin.", "API_BASE_URL=",
+        lines += ["# Central Web-ClapClip backend manages all website queues.", "API_BASE_URL=https://www.clapclip.net",
                   "WORKER_COGNITO_USERNAME=", "WORKER_COGNITO_PASSWORD=", "WORKER_COGNITO_USER_POOL_ID=",
                   "WORKER_COGNITO_CLIENT_ID=", "WORKER_COGNITO_REGION=ap-northeast-1", "NODE_TOKEN="]
     try:

@@ -84,7 +84,7 @@ bash scripts/setup-worker.sh start
 
 ## 5. 私有分布式节点
 
-管理员提供 Worker API origin、拥有 Worker 权限的账号及**永久密码**、匹配的 Cognito Pool/Client/Region 和允许的能力。在 `.env.portable` 的本机编辑器中填写；默认 `NODE_TOKEN` 留空，由 Worker 登录并自动刷新，不能把另一台电脑的短期节点令牌作为长期部署配置。账号必须允许节点登记；仅有 Cognito Worker 组身份并不代表账号策略、能力、节点归属都已通过授权。API origin 不一定是网站首页的 origin。
+Worker 接入统一使用 `API_BASE_URL=https://www.clapclip.net`，由 Web-ClapClip 中央后台管理五站任务，不直连业务站 API。管理员提供拥有 Worker 权限的账号及**永久密码**、匹配的 Cognito Pool/Client/Region 和允许的能力。在 `.env.portable` 的本机编辑器中填写；默认 `NODE_TOKEN` 留空，由 Worker 登录并自动刷新，不能把另一台电脑的短期节点令牌作为长期部署配置。账号必须允许节点登记；仅有 Cognito Worker 组身份并不代表账号策略、能力、节点归属都已通过授权。密码只发送给 Cognito SDK，中央后台收到 ID token；存储链接使用独立匿名客户端，不转发节点 token 或 cookie。managed 自动安装的中央 V1 契约已通过本地验收，部署、真实模型及装机仍待验证，本地测试不代表线上可用。
 
 只启用管理员已授权且本机可用的 `CAPABILITIES`。用显式配置进行离线检查：
 
@@ -102,7 +102,7 @@ Windows 同样使用 `setup-worker.ps1` 包装器传这些参数。已有安全�
 | `FORCE_CHANGE_PASSWORD` / `NEW_PASSWORD_REQUIRED` | 先完成永久密码设置或 Cognito 新密码流程，不循环尝试临时密码 |
 | 401 / `NotAuthorizedException` | 检查账号、永久密码及其 Cognito 环境 |
 | 403 / `worker_access_not_authorized` | 管理员检查账号启用、Worker 组、登记策略、允许能力，以及节点归属/吊销状态 |
-| `/api/worker/login` 返回 404 | Worker API origin 配错；不要从网站首页或管理页推导 API origin |
+| `/api/worker/login` 返回 404 | 确认 `API_BASE_URL=https://www.clapclip.net`；中央 Worker API 尚未发布时应停止，不能回退业务站 |
 | 本地缓存冲突 | 保留旧文件，使用明确的新节点 ID 和独立状态目录，不复用他人或已吊销节点 |
 
 可将已观察到的**错误码**交给离线 doctor 解释，例如 `doctor --mode distributed --auth-error 403`，或 `--auth-error FORCE_CHANGE_PASSWORD`；这不会验证账号、发送凭据或联系服务器。不要把密码、token 或完整错误正文当参数。

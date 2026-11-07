@@ -37,6 +37,8 @@ flowchart LR
 
 ## 公共任务契约
 
+可选 `mediaworker.managed` 是独立安装管理边界：native bootstrap 安装 tools，setup 串行创建整机身份、同源预检和模型校验；受限 agent 持有全局锁、准备固定 release、排空/准入/回退；runtime 通过 runner 的可选 shutdown/注册/领取前钩子接入，不改变业务引擎或租约算法。`client` 的普通成功领取观察钩子即使失败，也不能丢弃已接受任务。OS 注册、活进程、历史轮询及近期轮询分别报告。详细协议和当前后端验收限制见[无人值守安装](one-click-contract.md)。
+
 - `JobContext` 提供本地输入、params、attempt目录、cancel事件及progress回调。同步 `Engine.run()` 在线程中执行，返回 `RunResult(path,width,height,content_type)`。
 - `Engine.result_byte_limit(params, default)` 默认沿用图片上传限值；下载引擎仅执行当前下载规则，任务可合法收紧尺寸/时长，媒体无固定字节上限。`None`仅可用于合法当前下载媒体，JSON/AI结果不能解除限值。`RunResult.duration`只用于实际媒体ffprobe结果，AI完成请求维持原字段。参见[当前下载协议](download-policy.md)。
 - `Engine.failure_report(error, params)` 返回 `FailureReport`。图像维持既有错误/traceback语义；下载复用queue的公开错误码与脱敏diagnostic/phase，避免把来源stderr或签名URL发送给队列或日志。未加载引擎的异常也沿用对应队列格式。
