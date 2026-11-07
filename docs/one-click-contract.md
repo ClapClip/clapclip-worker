@@ -70,7 +70,12 @@ services stop setup. Preflight does not register or rotate a node, touch its
 last-seen state or claim a task.
 
 Only reviewed asset IDs, destination names, positive integer sizes and exact
-SHA-256 values are accepted. Backend-authorized model redirects must use HTTPS S3;
+SHA-256 values are accepted. Backend-authorized model redirects must use HTTPS S3
+or the exact reviewed GitHub CDN host `release-assets.githubusercontent.com`;
+only port 443 and URLs without userinfo or fragments are accepted.
+GitHub paths must match `/github-production-release-asset/<numeric-repo>/<hex-or-hyphen-asset>`.
+Provider signatures remain opaque, and storage redirects are never followed. The Worker
+does not call GitHub's authenticated API or receive the backend's private-repo key;
 every storage request has a fresh anonymous client without account headers,
 cookies or pools. Exact range/length checks protect resume; expired signatures
 are renewed through the backend, corrupt partials discarded. No signed URL,

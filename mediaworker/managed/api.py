@@ -216,9 +216,12 @@ class SetupAPI:
     def _storage_url(url: str) -> str:
         try:
             target = urlsplit(url)
-            valid = (target.scheme == "https" and not target.username and not target.password and target.port in {None, 443}
+            reviewed_host = ((target.hostname == "release-assets.githubusercontent.com" and
+                re.fullmatch(r"/github-production-release-asset/[0-9]+/[a-fA-F0-9-]+", target.path)) or
+                re.fullmatch(r"(?:[a-z0-9][a-z0-9.-]*\.)?s3(?:[.-][a-z0-9-]+)?\.amazonaws\.com(?:\.cn)?", target.hostname or ""))
+            valid = (target.scheme == "https" and target.username is None and target.password is None and target.port in {None, 443}
                 and not target.fragment
-                and re.fullmatch(r"(?:[a-z0-9][a-z0-9.-]*\.)?s3(?:[.-][a-z0-9-]+)?\.amazonaws\.com(?:\.cn)?", target.hostname or ""))
+                and reviewed_host)
         except ValueError:
             valid = False
         if not valid:

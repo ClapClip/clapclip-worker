@@ -3,7 +3,7 @@
 httpx==0.28.1
 pydantic==2.13.5
 python-dotenv==1.2.3
-pillow==12.3.0
+pillow==13.0.0
 numpy==2.5.3
 opencv-python==5.0.0.93
 onnxruntime-directml==1.22.0
