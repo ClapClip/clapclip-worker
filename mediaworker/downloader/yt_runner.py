@@ -10,6 +10,9 @@ import subprocess
 import sys
 import threading
 import re
+import json
+
+SECTION_STATE = None
 
 def download_fresh(arguments):
     """Use one already resolved component; never re-extract an expiring page."""
@@ -22,6 +25,30 @@ def download_fresh(arguments):
         from fresh_metadata import read_component
 
     args = list(arguments)
+    stop_path = None
+    metrics_path = nonce = None
+    if "--clapclip-stream-stop" in args:
+        if args.count("--clapclip-stream-stop") != 1:
+            raise ValueError("INVALID_FRESH_METADATA")
+        index = args.index("--clapclip-stream-stop")
+        if index + 1 >= len(args):raise ValueError("INVALID_FRESH_METADATA")
+        stop_path = Path(args[index+1])
+        del args[index:index+2]
+        if (stop_path.exists() or stop_path.is_symlink()
+                or stop_path.resolve().parent != Path.cwd().resolve()
+                or not re.fullmatch(r"\.section-stop-[0-9a-f]{32}\.flag",stop_path.name)):
+            raise ValueError("INVALID_FRESH_METADATA")
+        values={}
+        for flag in ("--clapclip-stream-metrics","--clapclip-stream-nonce"):
+            if args.count(flag)!=1:raise ValueError("INVALID_FRESH_METADATA")
+            index=args.index(flag)
+            if index+1>=len(args):raise ValueError("INVALID_FRESH_METADATA")
+            values[flag]=args[index+1];del args[index:index+2]
+        metrics_path=Path(values["--clapclip-stream-metrics"]);nonce=values["--clapclip-stream-nonce"]
+        if (metrics_path.exists() or metrics_path.is_symlink() or metrics_path.resolve().parent!=Path.cwd().resolve()
+                or not re.fullmatch(r"\.section-metrics-[0-9a-f]{32}\.json",metrics_path.name)
+                or not re.fullmatch(r"[0-9a-f]{32}",nonce)):
+            raise ValueError("INVALID_FRESH_METADATA")
     values = {}
     for flag in ("--clapclip-info-json", "--clapclip-component"):
         if args.count(flag) != 1:
@@ -41,8 +68,9 @@ def download_fresh(arguments):
         raise ValueError("INVALID_FRESH_METADATA")
     options = parsed.ydl_opts
     template = options.get("outtmpl", {}).get("default")
-    if (not isinstance(template, str) or Path(template).resolve().parent != Path.cwd().resolve()
-            or Path(template).name not in {"source-0.media", "source-1.media"}):
+    if ((stop_path is None and (not isinstance(template, str) or Path(template).resolve().parent != Path.cwd().resolve()
+            or Path(template).name not in {"source-0.media", "source-1.media"}))
+            or (stop_path is not None and template != "-")):
         raise ValueError("INVALID_FRESH_METADATA")
     # CLI _real_main normally initializes this global before YoutubeDL does.
     # The controlled API entry must disable plugins explicitly as well.
@@ -55,10 +83,33 @@ def download_fresh(arguments):
         def extract_info(self, *args, **kwargs):
             raise DownloadError("CLAPCLIP_REEXTRACT_DISABLED")
 
-    with FreshYoutubeDL(options) as ydl:
-        ydl.process_ie_result(info, download=True)
-        if ydl._download_retcode:
-            raise DownloadError("CLAPCLIP_FRESH_DOWNLOAD_FAILED")
+    global SECTION_STATE
+    if stop_path is not None:
+        SECTION_STATE = {"path":stop_path,"read_bytes":0,"read_calls":0,"source_bytes":0,
+                         "stopped":False,"failed":False,"unsupported_reason":None,"http_retry_pending":False}
+        options.update(quiet=True,noprogress=True,logtostderr=True,forceprint={},print_to_file={},progress_hooks=[])
+        # Controlled constant, not an imported extractor credential/header.
+        info["formats"][0].setdefault("http_headers",{})["Accept-Encoding"]="identity"
+    try:
+        with FreshYoutubeDL(options) as ydl:
+            ydl.process_ie_result(info, download=True)
+            if ydl._download_retcode:
+                raise DownloadError("CLAPCLIP_FRESH_DOWNLOAD_FAILED")
+    except (DownloadError,OSError):
+        if (SECTION_STATE is not None and not SECTION_STATE["stopped"]
+                and SECTION_STATE["unsupported_reason"] is None):
+            SECTION_STATE["failed"] = True
+        raise
+    finally:
+        if SECTION_STATE is not None:
+            stats={key:SECTION_STATE[key] for key in ("read_bytes","read_calls","source_bytes","stopped","failed","unsupported_reason")}
+            stats["failed"] = stats["failed"] or SECTION_STATE["http_retry_pending"]
+            stats["source_bytes_known"]=SECTION_STATE["source_bytes"]>0
+            stats["nonce"]=nonce
+            payload=json.dumps(stats,separators=(",",":"),allow_nan=False).encode()
+            if len(payload)>2048:raise ValueError("INVALID_SECTION_METRICS")
+            descriptor=os.open(metrics_path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+            with os.fdopen(descriptor,"wb") as stream:stream.write(payload)
 
 
 
@@ -96,13 +147,76 @@ def install_response_limits(max_metadata_bytes=8 * 1024 * 1024):
         return response
 
     def urlopen(self, *args, **kwargs):
+        section = SECTION_STATE if getattr(context,"media",False) else None
+        if section is not None and section["unsupported_reason"] is not None:
+            raise TransportError("CLAPCLIP_SECTION_NATIVE_RESTART_REQUIRED")
+        if section is not None and section["path"].exists():
+            section["stopped"]=True
+            raise TransportError("CLAPCLIP_SECTION_STOPPED")
         try:
             response = original_open(self, *args, **kwargs)
         except HTTPError as error:
+            if section is not None:
+                if 500 <= error.status < 600:
+                    # HttpFD owns its existing bounded retry policy. A later
+                    # positive response clears this; an unserved retry cannot
+                    # be disguised by a racing intentional consumer stop.
+                    section["http_retry_pending"]=True
+                else:section["failed"]=True
             # Extractors may parse JSON/HTML error bodies as metadata too.
             limit(error.response)
             raise
-        return response if getattr(context, "media", False) else limit(response)
+        if section is None:
+            return response if getattr(context, "media", False) else limit(response)
+        if getattr(response,"status",None) in {200,206}:section["http_retry_pending"]=False
+        if response.headers.get("Content-Encoding","identity").lower() not in {"identity",""}:
+            response.close();section["unsupported_reason"]="SECTION_NATIVE_ENCODING_UNSUPPORTED"
+            raise TransportError("CLAPCLIP_SECTION_ENCODING_REJECTED")
+        original_read=response.read
+        content_range=re.fullmatch(r"bytes (\d+)-(\d+)/(\d+|\*)",response.headers.get("Content-Range",""))
+        request=args[0] if args else kwargs.get("req")
+        requested=re.fullmatch(r"bytes=(\d+)-(\d*)",getattr(request,"headers",{}).get("Range",""))
+        requested_start=int(requested[1]) if requested else 0
+        status=getattr(response,"status",None)
+        if status not in {200,206}:
+            response.close();section["failed"]=True
+            raise TransportError("CLAPCLIP_SECTION_RESPONSE_REJECTED")
+        continuous=(requested_start==section["read_bytes"] and
+                    ((status==206 and content_range and int(content_range[1])==requested_start
+                      and int(content_range[2])>=requested_start)
+                     or (status==200 and section["read_bytes"]==0)))
+        if not continuous:
+            response.close();section["unsupported_reason"]="SECTION_NATIVE_RESTART_REQUIRED"
+            raise TransportError("CLAPCLIP_SECTION_NATIVE_RESTART_REQUIRED")
+        length=response.headers.get("Content-Length")
+        if length is not None and (not re.fullmatch(r"\d{1,20}",length)):
+            response.close();section["failed"]=True
+            raise TransportError("CLAPCLIP_SECTION_LENGTH_REJECTED")
+        total=(int(content_range[3]) if content_range and content_range[3]!="*"
+               else int(length) if status==200 and length is not None else 0)
+        if total and section["source_bytes"] not in {0,total}:
+            response.close();section["failed"]=True
+            raise TransportError("CLAPCLIP_SECTION_LENGTH_REJECTED")
+        if total:section["source_bytes"]=total
+        expected=int(length) if length is not None else None
+        received=0
+        def read(amount=None):
+            nonlocal received
+            if section["path"].exists():
+                section["stopped"]=True
+                response.close()
+                raise TransportError("CLAPCLIP_SECTION_STOPPED")
+            try:data=original_read(amount)
+            except (TransportError,OSError):
+                section["unsupported_reason"]="SECTION_NATIVE_RECOVERY_REQUIRED"
+                raise
+            section["read_calls"]+=1;section["read_bytes"]+=len(data);received+=len(data)
+            if not data and expected is not None and received<expected:
+                section["unsupported_reason"]="SECTION_NATIVE_RECOVERY_REQUIRED"
+                raise TransportError("CLAPCLIP_SECTION_NATIVE_RECOVERY_REQUIRED")
+            return data
+        response.read=read
+        return response
 
     def real_download(self, *args, **kwargs):
         previous = getattr(context, "media", False)

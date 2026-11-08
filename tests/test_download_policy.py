@@ -355,7 +355,7 @@ class LocalMediaCurrentTests(unittest.TestCase):
                                     Path(args[args.index('--output') + 1]))
                     return ''
                 value = super().run(args, directory, cancel, timeout, on_line, output_limit, failure_phase)
-                if padded_output and Path(args[0]).name.startswith('ffmpeg'):
+                if padded_output and Path(args[0]).name.startswith('ffmpeg') and Path(args[-1]).name == 'result.mp4':
                     test.pad(Path(args[-1]))
                 return value
         runner = FixtureRunner(cfg, Proxy())

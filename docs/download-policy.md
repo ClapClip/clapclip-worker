@@ -20,17 +20,23 @@
 
 info JSON中的duration保留来源时长，结果<=512KiB。info complete仍w=1,h=1、无duration，这是元数据动作设计。
 
-媒体必须实际转码/截取，最终ffprobe核对输出duration和尺寸：显示方向含旋转及像素比例归正后，不放大、等比例放入任务包围盒；只有高分辨率源时允许本地缩小，音频组件不套视频过滤。MP4为H.264/AAC，WebM为VP9/Opus，纯音频MP3。编码预留0.1秒处理容器舍入，结果严格<=任务maxDuration，无超限容差。
+媒体必须实际处理/截取，最终ffprobe核对输出duration和尺寸：显示方向含旋转及像素比例归正后，不放大、等比例放入任务包围盒；只有高分辨率源时允许本地缩小，音频组件不套视频过滤。MP4为H.264/AAC，WebM为VP9/Opus，纯音频MP3。编码预留0.1秒处理容器舍入，结果严格<=任务maxDuration，无超限容差。
+
+MP4仅在本地实际probe确认H.264 8bit yuv420p、兼容profile/level、AAC-LC（若选择含音频）、已合规偶数尺寸、SAR1、rotate0、展示起点0及有效整数时间戳时尝试从头streamcopy合并/裁切。copy结果必须重新核对每条stream及容器时长、所选尺寸和完整音视频解码；不符合即保留源文件回退原转码。低帧率/长GOP的copy裁切可能越界，不因参数设了300秒而放行。取消/超时不触发回退，全部阶段共用原deadline；MP3/WebM保持原转码。此路径减少符合条件媒体的本地编码工作，不保证来源传输、上传或端到端更快，也不承诺只下载前300秒来源字节。
 
 媒体complete在原node_id/job_id/lease_token/result_key/w/h之外必须有真实ffprobe输出duration。视频w/h为实际显示像素，MP3为0x0。没有历史媒体1x1无duration兼容；AI完成字段、模型及输入/输出大小保护不变。服务端仅持久化经过验证的输出字段，不由完成请求自报标记切换任务策略。
 
 ## 传输与保护
 
-媒体任务仅复用本次 attempt 刚解析并重新核对所选组件的最终 video 元数据；组件下载不再重新提取网页，失效时失败闭合，不回退到排队时的旧 URL 或隐式网页刷新。跨进程数据按必要字段白名单重建，移除 cookies、认证头、额外 URL、执行状态及路径；signed URL 只留在当前 attempt 的最多 8MiB 私有临时 JSON，成功、失败、取消时均清理，不入队列、日志或发布包。组件仍走受控 native downloader，HTTP 分块及必要 HLS/DASH 字段保留，FFmpeg 只处理本地文件；自定义 AES/downloader 覆盖不进入此桥接。超时诊断区分 info、download_source、probe、transcode 和 output_probe，既有超时及输出规则不变。
+媒体任务仅复用本次 attempt 刚解析并重新核对所选组件的最终 video 元数据；组件下载不再重新提取网页，失效时失败闭合，不回退到排队时的旧 URL 或隐式网页刷新。跨进程数据按必要字段白名单重建，移除 cookies、认证头、额外 URL、执行状态及路径；signed URL 只留在当前 attempt 的最多 8MiB 私有临时 JSON，成功、失败、取消时均清理，不入队列、日志或发布包。组件仍走受控 native downloader，HTTP 分块及必要 HLS/DASH 字段保留，FFmpeg 只处理本地文件或受控管道；自定义 AES/downloader 覆盖不进入此桥接。超时诊断区分 info、download_source、probe、transcode 和 output_probe，既有超时及输出规则不变。
+
+超过输出时长的HTTP(S) MP4/M4A组件，若有已知音视频身份且moov在mdat之前，按同一0..任务maxDuration窗口顺序取前段：当前native HttpFD保留原小块HTTP请求、公开连接代理及重定向保护，将纯二进制媒体经有界64KiB管道送给父进程直接启动的FFmpeg。FFmpeg输入只允许pipe协议、强制MOV解封装且禁用外部track/绝对路径引用，不接收来源URL，不联网取媒体，不强制重编码关键帧。首moov按box实际长度渐进读取且累计<=8MiB；mdat先到、未知codec身份或HLS/DASH等不支持路径明确记录full_native回退，继续共用原deadline。合法chunked来源无Content-Length仍可使用pipe，内部source_bytes=0/source_bytes_known=false仅表示未知，不增加源大小准入。已安全打开的body读取中断/已知长度短读、后续Range被忽略等需要native重置文件的情况，先完整回收双子进程/线程并删partial，再以同fresh元数据、同format、同deadline执行一次原native文件路径，不复inspect或增加其重试参数；编码不受pipe支持时同样明确回退。权限、egress、格式安全拒绝及真正终态进程错误仍失败，取消/超时优先且不触发回退。已完成的consumer不足以证明成功；子进程和读写线程未确认全退时，执行future、共享槽和attempt归属保持到回收完成。每个组件仅在内部日志记录策略、同窗口、格式保持布尔、上游响应body的应用读取字节（非wire精确流量）及源总长度；指标来自随机私有文件和nonce，不相信来源stderr。预读或小音轨可能读取更多甚至完整来源，不能把输出300秒等同仅下载300秒字节；实际最终时长、每条stream、映射与完整解码门仍由本地处理核验。
+
+媒体HTTP 5xx仍由原HttpFD按既有重试次数处理；成功恢复的响应不锁死pipe失败，耗尽或尚未恢复的失败不会被consumer完成/主动停源掩盖，没有新增重试循环。
 
 媒体源文件、中间文件、结果及其上传均没有应用固定字节上限，格式列表无大小提示；旧DOWNLOAD_MAX_BYTES/MAX_DURATION/MAX_WIDTH/MAX_HEIGHT环境值不再消费，也不换成更大的隐藏上限。允许在任务bounds中合法收紧尺寸/时长，与本地旧环境策略无关。
 
-HTTP decoded元数据及HTTPError正文每响应<=8MiB，子进程stdout/stderr合计<=8MiB，info JSON结果<=512KiB，三者分别保留。只有HttpFD媒体/fragment文件流不受元数据读取上限约束，不依赖来源Content-Type；inspection proxy有界，进入媒体阶段才解除媒体隧道体积限制。SSRF、公网DNS/连接pinning、来源准入、认证、socket并发、超时、限速、租约/fencing/ACK、取消清理和共享三槽/下载一个poller保留。来源由受控native yt-dlp下载，ffmpeg只读本地文件；超长/慢来源仍可超时，不承诺只向源站请求前300秒字节。
+HTTP decoded元数据及HTTPError正文每响应<=8MiB；普通info/文本子进程stdout/stderr合计<=8MiB，section路径仅累计诊断stderr<=8MiB，二进制媒体stdout不计入文本上限；info JSON结果<=512KiB。section媒体以64KiB阻塞读写背压、最多8MiB前置元数据和同一deadline约束，无隐藏媒体总字节cap。只有HttpFD媒体/fragment流不受元数据读取上限约束，不依赖来源Content-Type；inspection proxy有界，进入媒体阶段才解除媒体隧道体积限制。SSRF、公网DNS/连接pinning、来源准入、认证、socket并发、超时、限速、租约/fencing/ACK、取消清理和共享三槽/下载一个poller保留。来源由受控native yt-dlp下载，ffmpeg只读本地文件或受控管道；超长/慢来源仍可超时，不承诺只向源站请求前300秒字节。
 
 ## 发布边界
 

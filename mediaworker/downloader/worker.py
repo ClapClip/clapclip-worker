@@ -1,6 +1,7 @@
 """Shared download processing for local jobs and the private outbound node."""
 from dataclasses import dataclass, field
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -15,10 +16,12 @@ import uuid
 
 from .safety import ServiceError, hostname
 from .policy import DOWNLOAD_POLICY_VERSION, DOWNLOAD_LIMITS
-from .fresh_metadata import encode_component
+from .fresh_metadata import encode_component, read_component
+from .mp4_copy import PROBE_ENTRIES, compatible as copy_compatible, probe_shape
 
 PROTOCOLS = {"http", "https", "m3u8_native", "http_dash_segments"}
 FORMAT_ID = re.compile(r"[A-Za-z0-9_.-]{1,100}\Z")
+log = logging.getLogger(__name__)
 
 
 def positive_env(name, default, maximum):
@@ -257,6 +260,8 @@ class ProcessRunner:
         return args
 
     def run(self, args, directory, cancel, timeout, on_line=None, output_limit=8 * 1024 * 1024, failure_phase="process"):
+        if "--clapclip-section-limit" in args:
+            return self.run_section(args, directory, cancel, on_line, output_limit)
         # Do not leak service/API secrets, cloud credentials or proxy bypass vars.
         keep = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR"}
         env = {key: value for key, value in os.environ.items() if key.upper() in keep}
@@ -353,6 +358,137 @@ class ProcessRunner:
             error.diagnostic_code = "INVALID_SOURCE_JSON"
             raise error from None
 
+    def run_section(self, args, directory, cancel, on_line, output_limit):
+        from .section_pipe import SectionFailure, run as section_run
+        native=list(args)
+        values={}
+        try:
+            for flag in ("--clapclip-section-limit","--clapclip-section-deadline","--clapclip-section-components"):
+                if native.count(flag)!=1:raise ValueError()
+                index=native.index(flag);values[flag]=native[index+1];del native[index:index+2]
+            window=int(values["--clapclip-section-limit"])
+            components=int(values["--clapclip-section-components"])
+            deadline=float(values["--clapclip-section-deadline"])
+            if not 1<=window<=300 or components not in {1,2} or not math.isfinite(deadline):raise ValueError()
+            def argument(flag):
+                if native.count(flag)!=1:raise ValueError()
+                return native[native.index(flag)+1]
+            path=Path(argument("--clapclip-info-json"));target=Path(argument("--output"))
+            if (path.is_symlink() or path.resolve().parent!=directory.resolve()
+                    or not re.fullmatch(r"\.fresh-component-[0-9a-f]{32}\.json",path.name)
+                    or target.resolve().parent!=directory.resolve() or target.name not in {"source-0.media","source-1.media"}):
+                raise ValueError()
+            info=read_component(path,argument("--clapclip-component"))
+            source=info["formats"][0]
+            duration=finite_number(info.get("duration"))
+            if duration is None or duration<=0:raise ValueError()
+        except (ValueError,TypeError,IndexError,KeyError,OverflowError):
+            error=ServiceError("MEDIA_UNAVAILABLE","The selected source metadata could not be used.",422)
+            error.phase,error.diagnostic_code="download_source","INVALID_FRESH_METADATA"
+            raise error from None
+        component=int(target.stem.split('-')[1])
+        video=bool(source.get("vcodec") and source["vcodec"]!="none")
+        audio=bool(source.get("acodec") and source["acodec"]!="none")
+        reason=None
+        if source["protocol"] not in {"http","https"} or source["ext"] not in {"mp4","m4a"}:
+            reason="unsupported_protocol_or_container"
+        elif (not all(isinstance(source.get(key),str) and source[key] for key in ("vcodec","acodec"))
+              or not video and not audio):
+            reason="unknown_stream_mapping"
+        elif duration<=window:
+            reason="short_source"
+        if reason:
+            log.info("download section mode=full_native reason=%s component=%d format_preserved=true window_start=0 window_end=%d",reason,component,window)
+            return self.run(native,directory,cancel,self.copy_budget(cancel,deadline,"download_source"),on_line,output_limit,failure_phase="download_source")
+        started=time.monotonic()
+        try:
+            metrics=section_run(native,self.config.ffmpeg,self.config.node,target,window,video,
+                                "optional" if video and components==1 else audio,
+                                directory,cancel,deadline,self.proxy,stop_process)
+        except SectionFailure as failure:
+            if failure.fallback:
+                remaining=self.copy_budget(cancel,deadline,"download_source")
+                log.info("download section mode=full_native reason=%s component=%d format_preserved=true window_start=0 window_end=%d",failure.reason,component,window)
+                return self.run(native,directory,cancel,remaining,on_line,output_limit,failure_phase="download_source")
+            code=failure.reason if failure.reason in {"CANCELLED","TIMEOUT"} else "MEDIA_UNAVAILABLE"
+            error=ServiceError(code,"The source section could not be processed.",409 if code=="CANCELLED" else 422)
+            error.phase,error.diagnostic_code="download_source",failure.reason
+            raise error from None
+        metrics.update(component=component,format_preserved=True,source_duration=duration,
+                       component_count=components,
+                       elapsed_seconds=round(time.monotonic()-started,3))
+        log.info("download section %s",json.dumps(metrics,separators=(",",":"),sort_keys=True))
+        if on_line:on_line("progress:100%")
+        return ""
+
+    def copy_mp4(self, files, option, target, directory, cancel, deadline, input_options):
+        """Try a validated local remux, retaining sources for encoder fallback."""
+        if option["audio"] or option["public"]["ext"] != "mp4":
+            return False
+        max_width = min(self.config.max_width, option["public"].get("width", 0))
+        max_height = min(self.config.max_height, option["public"].get("height", 0))
+        try:
+            inputs = []
+            for path in files:
+                raw = self.run([self.config.ffprobe, "-v", "error", *input_options,
+                                "-show_entries", PROBE_ENTRIES, "-of", "json", str(path)],
+                               directory, cancel, min(15, self.copy_budget(cancel, deadline, "probe")), failure_phase="probe")
+                details = json.loads(raw)
+                if not probe_shape(details):
+                    return False
+                inputs.append(details)
+            audio = len(files) == 2 or any(s.get("codec_type") == "audio" for s in inputs[0].get("streams", []))
+            if len(files) == 2:
+                admitted = (copy_compatible(inputs[0], max_width, max_height, video=True, audio=False)
+                            and copy_compatible(inputs[1], max_width, max_height, video=False, audio=True))
+            else:
+                admitted = copy_compatible(inputs[0], max_width, max_height, video=True, audio=audio)
+            if not admitted:
+                return False
+            command = [self.config.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y"]
+            for path in files:
+                command += input_options + ["-i", str(path)]
+            command += ["-map", "0:v:0"]
+            if audio:
+                command += ["-map", "1:a:0" if len(files) == 2 else "0:a:0"]
+            command += ["-map_metadata", "-1", "-map_chapters", "-1", "-c", "copy",
+                        "-movflags", "+faststart", "-t", str(self.config.max_duration - 0.1), str(target)]
+            self.run(command, directory, cancel, self.copy_budget(cancel, deadline), failure_phase="transcode")
+            raw = self.run([self.config.ffprobe, "-v", "error", *input_options,
+                            "-show_entries", PROBE_ENTRIES, "-of", "json", str(target)],
+                           directory, cancel, min(15, self.copy_budget(cancel, deadline, "output_probe")), failure_phase="output_probe")
+            if not copy_compatible(json.loads(raw), max_width, max_height,
+                                   video=True, audio=audio, max_duration=self.config.max_duration):
+                target.unlink(missing_ok=True)
+                return False
+            # Decode every selected stream. A packet-copy success alone is not
+            # evidence that the resulting container is playable.
+            self.run([self.config.ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-xerror",
+                      "-err_detect", "explode", *input_options, "-i", str(target), "-map", "0:v:0",
+                      *( ["-map", "0:a:0"] if audio else [] ), "-threads", "2", "-f", "null", "-"],
+                     directory, cancel, self.copy_budget(cancel, deadline, "output_probe"), failure_phase="output_probe")
+            return True
+        except ServiceError as error:
+            if error.code in {"TIMEOUT", "CANCELLED"}:
+                try:target.unlink(missing_ok=True)
+                except OSError:pass  # Preserve cancellation; lifecycle owns final cleanup.
+                raise
+            target.unlink(missing_ok=True)
+            return False
+        except (ValueError, TypeError, OSError):
+            target.unlink(missing_ok=True)
+            return False
+
+    def copy_budget(self, cancel, deadline, phase="transcode"):
+        remaining = deadline - time.monotonic()
+        code = "CANCELLED" if cancel.is_set() else "TIMEOUT" if remaining <= 0 else None
+        if code:
+            error = ServiceError(code, "The download was cancelled." if code == "CANCELLED" else "This video took too long to process.", 409 if code == "CANCELLED" else 422)
+            error.phase = phase
+            error.diagnostic_code = code
+            raise error
+        return remaining
+
     def download(self, job, media, option, directory, update):
         info = self.inspect(media["url"], directory, job["cancel"])
         if not isinstance(info, dict):
@@ -366,6 +502,11 @@ class ProcessRunner:
         self.output_details = None
         self.proxy.allow_media()
         deadline = time.monotonic() + self.config.job_timeout
+        def remaining(phase):
+            # The new MP4 fallback never receives an extra minimum second.
+            if not option["audio"] and option["public"]["ext"] == "mp4":
+                return self.copy_budget(job["cancel"], deadline, phase)
+            return max(1, deadline - time.monotonic())
         files = []
         component_video = option.get("component_video", [not option["audio"]] * len(option["components"]))
         for index, (component, is_video) in enumerate(zip(option["components"], component_video)):
@@ -390,11 +531,14 @@ class ProcessRunner:
                 descriptor = os.open(metadata_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 with os.fdopen(descriptor, "wb") as stream:
                     stream.write(payload)
+                section_args=(["--clapclip-section-limit",str(self.config.max_duration),
+                               "--clapclip-section-deadline",str(deadline),
+                               "--clapclip-section-components",str(len(option["components"]))] if duration>self.config.max_duration else [])
                 self.run(self.base_args() + ["--no-simulate", "--no-part", "--no-continue", "--no-overwrites",
                          "--format", selector, "--output", str(target), "--newline", "--progress", "--progress-delta", "0.5",
                          "--progress-template", "download:progress:%(progress._percent_str)s",
-                         "--clapclip-info-json", str(metadata_path), "--clapclip-component", component],
-                         directory, job["cancel"], max(1, deadline - time.monotonic()), progress, failure_phase="download_source")
+                         "--clapclip-info-json", str(metadata_path), "--clapclip-component", component,*section_args],
+                         directory, job["cancel"], remaining("download_source"), progress, failure_phase="download_source")
             finally:
                 metadata_path.unlink(missing_ok=True)
             if not target.is_file() or target.stat().st_size == 0:
@@ -403,7 +547,7 @@ class ProcessRunner:
         update("processing", 90)
         # Protocol + demuxer allowlists prohibit HTTP, HLS, concat and file-playlist indirection.
         input_options = ["-protocol_whitelist", "file,pipe", "-format_whitelist", "mov,matroska,webm,mpegts,mp3,ogg,aac"]
-        probe = self.run([self.config.ffprobe, "-v", "error", *input_options, "-show_entries", "format=duration:stream=codec_type", "-of", "json", str(files[0])], directory, job["cancel"], min(15, max(1, deadline - time.monotonic())), failure_phase="probe")
+        probe = self.run([self.config.ffprobe, "-v", "error", *input_options, "-show_entries", "format=duration:stream=codec_type", "-of", "json", str(files[0])], directory, job["cancel"], min(15, remaining("probe")), failure_phase="probe")
         try:
             details = json.loads(probe)
             duration = float(details.get("format", {}).get("duration", 0))
@@ -441,13 +585,14 @@ class ProcessRunner:
         # output bound using ffprobe; never silently tolerate an overlong file.
         command += ["-ss", "0", "-t", str(self.config.max_duration - 0.1)]
         command += [str(target)]
-        self.run(command, directory, job["cancel"], max(1, deadline - time.monotonic()), failure_phase="transcode")
+        if not self.copy_mp4(files, option, target, directory, job["cancel"], deadline, input_options):
+            self.run(command, directory, job["cancel"], remaining("transcode"), failure_phase="transcode")
         if not target.is_file() or target.stat().st_size <= 0:
             raise ServiceError("MEDIA_UNAVAILABLE", "The source did not produce a playable file.", 422)
         output_probe = self.run([self.config.ffprobe, "-v", "error", *input_options,
                                  "-show_entries", "format=duration:stream=codec_type,width,height,duration,sample_aspect_ratio:stream_tags=rotate:stream_side_data=rotation",
                                  "-of", "json", str(target)], directory, job["cancel"],
-                                min(15, max(1, deadline - time.monotonic())), failure_phase="output_probe")
+                                min(15, remaining("output_probe")), failure_phase="output_probe")
         try:
             final = json.loads(output_probe)
             final_duration = float(final.get("format", {}).get("duration", 0))
