@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 
+from .timings import record as record_timing
 from .safety import ServiceError, hostname
 from .policy import DOWNLOAD_POLICY_VERSION, DOWNLOAD_LIMITS
 from .fresh_metadata import encode_component, read_component
@@ -262,6 +263,11 @@ class ProcessRunner:
     def run(self, args, directory, cancel, timeout, on_line=None, output_limit=8 * 1024 * 1024, failure_phase="process"):
         if "--clapclip-section-limit" in args:
             return self.run_section(args, directory, cancel, on_line, output_limit)
+        started=time.monotonic()
+        stage={"info":"info","download_source":"source","probe":"source_probe","output_probe":"output_probe"}.get(failure_phase,"encode")
+        if args and args[0]==self.config.ffmpeg:
+            stage="decode" if "null" in args else "copy" if "copy" in args else "encode"
+        record_timing(stage,started,state="begin")
         # Do not leak service/API secrets, cloud credentials or proxy bypass vars.
         keep = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR"}
         env = {key: value for key, value in os.environ.items() if key.upper() in keep}
@@ -345,6 +351,7 @@ class ProcessRunner:
             raise
         finally:
             stop_process(process)
+            record_timing(stage,started)
             for thread in readers:
                 thread.join(timeout=2)
 
@@ -386,40 +393,48 @@ class ProcessRunner:
             error=ServiceError("MEDIA_UNAVAILABLE","The selected source metadata could not be used.",422)
             error.phase,error.diagnostic_code="download_source","INVALID_FRESH_METADATA"
             raise error from None
-        component=int(target.stem.split('-')[1])
-        video=bool(source.get("vcodec") and source["vcodec"]!="none")
-        audio=bool(source.get("acodec") and source["acodec"]!="none")
-        reason=None
-        if source["protocol"] not in {"http","https"} or source["ext"] not in {"mp4","m4a"}:
-            reason="unsupported_protocol_or_container"
-        elif (not all(isinstance(source.get(key),str) and source[key] for key in ("vcodec","acodec"))
-              or not video and not audio):
-            reason="unknown_stream_mapping"
-        elif duration<=window:
-            reason="short_source"
-        if reason:
-            log.info("download section mode=full_native reason=%s component=%d format_preserved=true window_start=0 window_end=%d",reason,component,window)
-            return self.run(native,directory,cancel,self.copy_budget(cancel,deadline,"download_source"),on_line,output_limit,failure_phase="download_source")
         started=time.monotonic()
+        record_timing("source",started,state="begin",protocol=source["protocol"])
         try:
-            metrics=section_run(native,self.config.ffmpeg,self.config.node,target,window,video,
-                                "optional" if video and components==1 else audio,
-                                directory,cancel,deadline,self.proxy,stop_process)
-        except SectionFailure as failure:
-            if failure.fallback:
-                remaining=self.copy_budget(cancel,deadline,"download_source")
-                log.info("download section mode=full_native reason=%s component=%d format_preserved=true window_start=0 window_end=%d",failure.reason,component,window)
-                return self.run(native,directory,cancel,remaining,on_line,output_limit,failure_phase="download_source")
-            code=failure.reason if failure.reason in {"CANCELLED","TIMEOUT"} else "MEDIA_UNAVAILABLE"
-            error=ServiceError(code,"The source section could not be processed.",409 if code=="CANCELLED" else 422)
-            error.phase,error.diagnostic_code="download_source",failure.reason
-            raise error from None
-        metrics.update(component=component,format_preserved=True,source_duration=duration,
-                       component_count=components,
-                       elapsed_seconds=round(time.monotonic()-started,3))
-        log.info("download section %s",json.dumps(metrics,separators=(",",":"),sort_keys=True))
-        if on_line:on_line("progress:100%")
-        return ""
+            component=int(target.stem.split('-')[1])
+            video=bool(source.get("vcodec") and source["vcodec"]!="none")
+            audio=bool(source.get("acodec") and source["acodec"]!="none")
+            reason=None
+            if source["protocol"] not in PROTOCOLS or source["ext"] not in {"mp4","m4a"}:
+                reason="unsupported_protocol_or_container"
+            elif (not all(isinstance(source.get(key),str) and source[key] for key in ("vcodec","acodec"))
+                  or not video and not audio):
+                reason="unknown_stream_mapping"
+            elif os.name=="nt" and Path(self.config.python).resolve()!=Path(sys.executable).resolve():
+                reason="unsupported_interpreter_launch"
+            elif duration<=window:
+                reason="short_source"
+            if reason:
+                log.info("download section mode=full_native reason=%s protocol=%s component=%d format_preserved=true window_start=0 window_end=%d",reason,source["protocol"],component,window)
+                return self.run(native,directory,cancel,self.copy_budget(cancel,deadline,"download_source"),on_line,output_limit,failure_phase="download_source")
+            try:
+                metrics=section_run(native,self.config.ffmpeg,self.config.node,target,window,video,
+                                    "optional" if video and components==1 else audio,
+                                    directory,cancel,deadline,self.proxy,stop_process)
+            except SectionFailure as failure:
+                if failure.fallback:
+                    remaining=self.copy_budget(cancel,deadline,"download_source")
+                    log.info("download section mode=full_native reason=%s protocol=%s component=%d format_preserved=true window_start=0 window_end=%d",failure.reason,source["protocol"],component,window)
+                    return self.run(native,directory,cancel,remaining,on_line,output_limit,failure_phase="download_source")
+                code=failure.reason if failure.reason in {"CANCELLED","TIMEOUT"} else "MEDIA_UNAVAILABLE"
+                error=ServiceError(code,"The source section could not be processed.",409 if code=="CANCELLED" else 422)
+                error.phase,error.diagnostic_code="download_source",failure.reason
+                raise error from None
+            metrics.update(component=component,format_preserved=True,source_duration=duration,
+                           component_count=components,
+                           elapsed_seconds=round(time.monotonic()-started,3))
+            log.info("download section %s",json.dumps(metrics,separators=(",",":"),sort_keys=True))
+            if on_line:on_line("progress:100%")
+            return ""
+        finally:
+            try:output_bytes=target.stat().st_size
+            except OSError:output_bytes=0
+            record_timing("source",started,output_bytes=output_bytes,protocol=source["protocol"])
 
     def copy_mp4(self, files, option, target, directory, cancel, deadline, input_options):
         """Try a validated local remux, retaining sources for encoder fallback."""

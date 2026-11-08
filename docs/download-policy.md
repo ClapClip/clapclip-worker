@@ -30,7 +30,7 @@ MP4仅在本地实际probe确认H.264 8bit yuv420p、兼容profile/level、AAC-L
 
 媒体任务仅复用本次 attempt 刚解析并重新核对所选组件的最终 video 元数据；组件下载不再重新提取网页，失效时失败闭合，不回退到排队时的旧 URL 或隐式网页刷新。跨进程数据按必要字段白名单重建，移除 cookies、认证头、额外 URL、执行状态及路径；signed URL 只留在当前 attempt 的最多 8MiB 私有临时 JSON，成功、失败、取消时均清理，不入队列、日志或发布包。组件仍走受控 native downloader，HTTP 分块及必要 HLS/DASH 字段保留，FFmpeg 只处理本地文件或受控管道；自定义 AES/downloader 覆盖不进入此桥接。超时诊断区分 info、download_source、probe、transcode 和 output_probe，既有超时及输出规则不变。
 
-超过输出时长的HTTP(S) MP4/M4A组件，若有已知音视频身份且moov在mdat之前，按同一0..任务maxDuration窗口顺序取前段：当前native HttpFD保留原小块HTTP请求、公开连接代理及重定向保护，将纯二进制媒体经有界64KiB管道送给父进程直接启动的FFmpeg。FFmpeg输入只允许pipe协议、强制MOV解封装且禁用外部track/绝对路径引用，不接收来源URL，不联网取媒体，不强制重编码关键帧。首moov按box实际长度渐进读取且累计<=8MiB；mdat先到、未知codec身份或HLS/DASH等不支持路径明确记录full_native回退，继续共用原deadline。合法chunked来源无Content-Length仍可使用pipe，内部source_bytes=0/source_bytes_known=false仅表示未知，不增加源大小准入。已安全打开的body读取中断/已知长度短读、后续Range被忽略等需要native重置文件的情况，先完整回收双子进程/线程并删partial，再以同fresh元数据、同format、同deadline执行一次原native文件路径，不复inspect或增加其重试参数；编码不受pipe支持时同样明确回退。权限、egress、格式安全拒绝及真正终态进程错误仍失败，取消/超时优先且不触发回退。已完成的consumer不足以证明成功；子进程和读写线程未确认全退时，执行future、共享槽和attempt归属保持到回收完成。每个组件仅在内部日志记录策略、同窗口、格式保持布尔、上游响应body的应用读取字节（非wire精确流量）及源总长度；指标来自随机私有文件和nonce，不相信来源stderr。预读或小音轨可能读取更多甚至完整来源，不能把输出300秒等同仅下载300秒字节；实际最终时长、每条stream、映射与完整解码门仍由本地处理核验。
+超过输出时长的HTTP(S) MP4/M4A组件，若有已知音视频身份且moov在mdat之前，按同一0..任务maxDuration窗口顺序取前段：当前native HttpFD保留原小块HTTP请求、公开连接代理及重定向保护，将纯二进制媒体经有界64KiB管道送给父进程直接启动的FFmpeg。FFmpeg输入只允许pipe协议、强制MOV解封装且禁用外部track/绝对路径引用，不接收来源URL，不联网取媒体，不强制重编码关键帧。首moov按box实际长度渐进读取且累计<=8MiB；mdat先到、未知codec身份或缺乏可信分片证据等不支持路径明确记录full_native回退，继续共用原deadline。合法chunked来源无Content-Length仍可使用pipe，内部source_bytes=0/source_bytes_known=false仅表示未知，不增加源大小准入。已安全打开的body读取中断/已知长度短读、后续Range被忽略等需要native重置文件的情况，先完整回收双子进程/线程并删partial，再以同fresh元数据、同format、同deadline执行一次原native文件路径，不复inspect或增加其重试参数；编码不受pipe支持时同样明确回退。权限、egress、格式安全拒绝及真正终态进程错误仍失败，取消/超时优先且不触发回退。已完成的consumer不足以证明成功；子进程和读写线程未确认全退时，执行future、共享槽和attempt归属保持到回收完成。每个组件仅在内部日志记录策略、同窗口、格式保持布尔、上游响应body的应用读取字节（非wire精确流量）及源总长度；指标来自随机私有文件和nonce，不相信来源stderr。预读或小音轨可能读取更多甚至完整来源，不能把输出300秒等同仅下载300秒字节；实际最终时长、每条stream、映射与完整解码门仍由本地处理核验。
 
 媒体HTTP 5xx仍由原HttpFD按既有重试次数处理；成功恢复的响应不锁死pipe失败，耗尽或尚未恢复的失败不会被consumer完成/主动停源掩盖，没有新增重试循环。
 
@@ -39,5 +39,13 @@ MP4仅在本地实际probe确认H.264 8bit yuv420p、兼容profile/level、AAC-L
 HTTP decoded元数据及HTTPError正文每响应<=8MiB；普通info/文本子进程stdout/stderr合计<=8MiB，section路径仅累计诊断stderr<=8MiB，二进制媒体stdout不计入文本上限；info JSON结果<=512KiB。section媒体以64KiB阻塞读写背压、最多8MiB前置元数据和同一deadline约束，无隐藏媒体总字节cap。只有HttpFD媒体/fragment流不受元数据读取上限约束，不依赖来源Content-Type；inspection proxy有界，进入媒体阶段才解除媒体隧道体积限制。SSRF、公网DNS/连接pinning、来源准入、认证、socket并发、超时、限速、租约/fencing/ACK、取消清理和共享三槽/下载一个poller保留。来源由受控native yt-dlp下载，ffmpeg只读本地文件或受控管道；超长/慢来源仍可超时，不承诺只向源站请求前300秒字节。
 
 ## 发布边界
+
+下载内部阶段日志仅含固定枚举和数值，不含任务身份、来源URL或headers：info、source、source_probe、copy、encode、decode、output_probe、engine、preupload、upload、complete各记begin/end及monotonic耗时，source带原生protocol枚举，engine/upload记本地输入输出字节。现有300秒仍是fresh inspect之后的处理预算；preupload心跳、上传和complete ACK在该预算之外，上传120秒是每I/O超时且保留原重试，日志不将这些时段冒称编码耗时。
+
+原生分片前缀只在本次fresh/同format下启用：HLS读取一次受原代理与8MiB元数据限制的VOD media playlist，以可信EXTINF保留从首片到覆盖窗口的完整原行前缀，KEY/MAP/BYTERANGE/MEDIA-SEQUENCE及默认IV处理继续交原HlsFD。普通缓存、绝对时钟和起始discontinuity序号标签原样保留；真实discontinuity、master/live/START/LL/ad/GAP、缺时长或未知EXT标签明确full_native。实际媒体前缀识别TS或moov在前的MOV后才交固定pipe解封装，不把无MAP推断为TS。
+
+无时长的http_dash_segments仅在fresh精确整数filesize与同selected baseURL的唯一range参数证明从byte0连续、无缺口/重叠直至EOF时使用原Dash producer→MOV pipe，以实际PTS裁取，不按字节/片数估时；官方末片end=filesize的一过尾拼法仅归一为最后有效字节，空EOF附片拒绝。带Content-Range的响应须与该片声明、片内resume及精确总长一致，原文件中的重绕/恢复由native负责；未知filesize、近似size、无法证明初始化归属的普通duration DASH等明确full_native。选中前缀缺片不允许skip后假成功，原生安全重试保留；取消/超时/未恢复错误不能被主动停源掩盖。
+
+每个组件使用同一0..limit窗口、同deadline且fragment并发1。原FragmentFD先完整下载一片到私有临时文件再读入管道，因此预读上界含一个完整原生片及native/OS缓冲，不能宣传只有64KiB或精确到300秒的网络流量。内部fragments_started是HttpFD片尝试（含初始化和重试），不是唯一媒体片数；read_bytes仅计响应body应用读取，HLS无整源长度时source_bytes=0/unknown，严格byte-dashy才标fresh_filesize。Windows仅当Python启动目标精确等于当前sys.executable时，以受信base interpreter和重新构造的当前venv hint取得actual进程句柄；显式其它Python保留原native路径，不偷换解释器。消费者停止后原生迭代器先检查intent-stop，进程、线程、私有分片目录均确认收口后才回业务/释放槽；没有新增FFmpeg网络协议、外部下载器、网页重提取、媒体字节cap或公开业务字段。
 
 代码提交、预检或本地生成样本不证明已上线。Download与统一CutOut API的生成/分配/完成验收、数据库约束、对象传输和当前Worker都要一致；应用无cap不等于生产数据库已解除固定体积约束。必须逐节点核实实际加载能力，不能以本机推断其它节点。

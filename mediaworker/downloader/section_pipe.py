@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
+import tempfile
 import struct
 import subprocess
 import sys
@@ -75,10 +77,24 @@ def environment(directory, proxy=None, port=None, node=None):
     return env
 
 
-def command(ffmpeg, target, window, video, audio):
+def owned_command(args, env):
+    """On Windows retain the actual Python handle, not its venv redirector.
+
+Only our exact interpreter can use our trusted base and venv hint. The hint is
+constructed after environment filtering; no inherited Python overrides enter.
+"""
+    args, env = list(args), dict(env)
+    if os.name == "nt" and args and Path(args[0]).resolve() == Path(sys.executable).resolve():
+        args[0] = sys._base_executable
+        env["__PYVENV_LAUNCHER__"] = sys.executable
+    return args, env
+
+
+def command(ffmpeg, target, window, video, audio, container="mov"):
     args=[ffmpeg,"-nostdin","-hide_banner","-v","error","-y",
-          "-protocol_whitelist","pipe","-format_whitelist","mov","-f","mov",
-          "-enable_drefs","0","-use_absolute_path","0","-i","pipe:0"]
+          "-protocol_whitelist","pipe","-format_whitelist",container,"-f",container]
+    if container=="mov":args += ["-enable_drefs","0","-use_absolute_path","0"]
+    args += ["-i","pipe:0"]
     if video:args += ["-map","0:v:0"]
     if audio:args += ["-map","0:a:0?" if audio=="optional" else "0:a:0"]
     return args+["-map_metadata","0","-map_chapters","-1","-c","copy","-t",str(window),"-f","mp4",str(target)]
@@ -87,15 +103,12 @@ def command(ffmpeg, target, window, video, audio):
 def run(producer_args, ffmpeg, node, target, window, video, audio, directory, cancel, deadline, proxy, stopper):
     producer = consumer = None
     threads=[]
-    stop_path=directory/(".section-stop-"+uuid.uuid4().hex+".flag")
-    metrics_path=directory/(".section-metrics-"+uuid.uuid4().hex+".json")
+    producer_directory=Path(tempfile.mkdtemp(prefix=".section-native-",dir=directory))
+    stop_path=producer_directory/(".section-stop-"+uuid.uuid4().hex+".flag")
+    metrics_path=producer_directory/(".section-metrics-"+uuid.uuid4().hex+".json")
     nonce=secrets.token_hex(16)
-    producer_args=list(producer_args)
-    producer_args[producer_args.index("--output")+1]="-"
-    producer_args += ["--quiet","--no-progress","--clapclip-stream-stop",str(stop_path),
-                      "--clapclip-stream-metrics",str(metrics_path),"--clapclip-stream-nonce",nonce]
     ready, start_consumer, drain, done = (threading.Event() for _ in range(4))
-    state={"failure":None,"prefix_bytes":0,"pipe_bytes":0,"output_total":0,"stats":None}
+    state={"failure":None,"prefix_bytes":0,"pipe_bytes":0,"output_total":0,"stats":None,"container":"mov"}
     tails={"producer":bytearray(),"consumer":bytearray()}
     guard=threading.Lock()
 
@@ -114,7 +127,12 @@ def run(producer_args, ffmpeg, node, target, window, video, audio, directory, ca
                 or not isinstance(stats.get("stopped"),bool) or not isinstance(stats.get("failed"),bool)
                 or not isinstance(stats.get("source_bytes_known"),bool)
                 or stats["source_bytes_known"]!=(stats["source_bytes"]>0)
-                or stats.get("unsupported_reason") not in {None,"SECTION_NATIVE_RESTART_REQUIRED","SECTION_NATIVE_RECOVERY_REQUIRED","SECTION_NATIVE_ENCODING_UNSUPPORTED"}
+                or stats.get("unsupported_reason") not in {None,"SECTION_NATIVE_RESTART_REQUIRED","SECTION_NATIVE_RECOVERY_REQUIRED","SECTION_NATIVE_ENCODING_UNSUPPORTED","SECTION_NATIVE_FRAGMENT_UNSUPPORTED"}
+                or stats.get("mode") not in {"native_pipe_faststart","native_hls_prefix","native_dash_byte_pipe"}
+                or any(type(stats.get(key)) is not int or stats[key]<0 for key in
+                       ("fragments_selected","fragments_total","fragments_started"))
+                or stats.get("fragments_selected",0)>stats.get("fragments_total",0)
+                or not isinstance(stats.get("tail_clamped"),bool)
                 or stats.get("nonce")!=nonce):
             raise SectionFailure("SECTION_METRICS_UNCONFIRMED")
         return stats
@@ -164,8 +182,16 @@ def run(producer_args, ffmpeg, node, target, window, video, audio, directory, ca
                     data.extend(part)
                 prefix.extend(data)
                 return data
-            while True:
-                size,kind=struct.unpack(">I4s",take(8));header=8
+            first=take(8)
+            # Classify bytes, not HLS ext/MAP presence. Three actual TS packet
+            # sync points suffice to select only the fixed native MPEG-TS demuxer.
+            if first[0]==0x47:
+                take(188*3-len(prefix))
+                if not all(prefix[offset]==0x47 for offset in (0,188,376)):
+                    raise SectionFailure("SECTION_PREFIX_UNSUPPORTED",fallback=True)
+                state["container"]="mpegts"
+            while state["container"]=="mov":
+                size,kind=struct.unpack(">I4s",first);header=8
                 if size==1:size=struct.unpack(">Q",take(8))[0];header=16
                 if size<header or size>MAX_PREFIX-len(prefix)+header:
                     raise SectionFailure("SECTION_PREFIX_UNSUPPORTED",fallback=True)
@@ -173,6 +199,7 @@ def run(producer_args, ffmpeg, node, target, window, video, audio, directory, ca
                     raise SectionFailure("SECTION_NOT_FASTSTART",fallback=True)
                 take(size-header)
                 if kind==b"moov":break
+                first=take(8)
             state["prefix_bytes"]=len(prefix)
             ready.set()
             while not start_consumer.wait(.05):check()
@@ -202,8 +229,9 @@ def run(producer_args, ffmpeg, node, target, window, video, audio, directory, ca
                 try:consumer.stdin.close()
                 except OSError:pass
 
-    def launch(args, env, **streams):
-        return subprocess.Popen(args,cwd=directory,env=env,shell=False,
+    def launch(args, env, cwd=directory, **streams):
+        args, env = owned_command(args, env)
+        return subprocess.Popen(args,cwd=cwd,env=env,shell=False,
             start_new_session=os.name!="nt",creationflags=subprocess.CREATE_NO_WINDOW if os.name=="nt" else 0,**streams)
 
     def start_thread(fn,*args):
@@ -211,14 +239,25 @@ def run(producer_args, ffmpeg, node, target, window, video, audio, directory, ca
 
     successful=False
     try:
+        producer_args=list(producer_args)
+        if "--clapclip-info-json" in producer_args:
+            index=producer_args.index("--clapclip-info-json")+1
+            original_metadata=Path(producer_args[index])
+            cloned_metadata=producer_directory/original_metadata.name
+            shutil.copyfile(original_metadata,cloned_metadata)
+            producer_args[index]=str(cloned_metadata)
+        producer_args[producer_args.index("--output")+1]="-"
+        producer_args += ["--quiet","--no-progress","--clapclip-stream-stop",str(stop_path),
+                          "--clapclip-stream-metrics",str(metrics_path),"--clapclip-stream-nonce",nonce,
+                          "--clapclip-stream-window",str(window)]
         check()
-        producer=launch(producer_args,environment(directory,proxy.url,proxy.port,node),
+        producer=launch(producer_args,environment(producer_directory,proxy.url,proxy.port,node),cwd=producer_directory,
                         stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         start_thread(capture,producer,"producer");start_thread(pump)
         while not ready.wait(.05):check()
         check()
         if producer.poll() not in {None,0}:raise producer_failure()
-        consumer=launch(command(ffmpeg,target,window,video,audio),environment(directory),
+        consumer=launch(command(ffmpeg,target,window,video,audio,state["container"]),environment(directory),
                         stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
         start_thread(capture,consumer,"consumer");start_consumer.set()
         while consumer.poll() is None:
@@ -245,10 +284,15 @@ def run(producer_args, ffmpeg, node, target, window, video, audio, directory, ca
             raise SectionFailure("SECTION_PRODUCER_FAILED")
         if any(thread.is_alive() for thread in threads):raise SectionFailure("SECTION_THREAD_UNCONFIRMED")
         successful=True
-        return {"section_mode":"native_pipe_faststart","window_start":0,"window_end":window,
+        return {"section_mode":stats.get("mode","native_pipe_faststart"),"container":state["container"],
+                "fragments_started":stats.get("fragments_started",0),
+                "fragments_selected":stats.get("fragments_selected",0),"fragments_total":stats.get("fragments_total",0),
+                "tail_clamped":stats.get("tail_clamped",False),"window_start":0,"window_end":window,
                 "prefix_bytes":state["prefix_bytes"],"pipe_bytes":state["pipe_bytes"],
                 "upstream_read_bytes":stats["read_bytes"],"upstream_read_calls":stats["read_calls"],
                 "source_bytes":stats["source_bytes"],"source_bytes_known":stats["source_bytes_known"],
+                "source_bytes_origin":"fresh_filesize" if stats["mode"]=="native_dash_byte_pipe" else
+                    "http_response" if stats["source_bytes_known"] else "unknown",
                 "producer_stop_requested":stats["stopped"]}
     except (OSError,ValueError,TypeError,RuntimeError):
         raise SectionFailure("SECTION_LOCAL_PROCESS_FAILED") from None
@@ -263,6 +307,8 @@ def run(producer_args, ffmpeg, node, target, window, video, audio, directory, ca
         for path in ([stop_path,metrics_path] if successful else [stop_path,metrics_path,target]):
             try:path.unlink(missing_ok=True)
             except OSError:cleanup_failed=True
+        try:shutil.rmtree(producer_directory)
+        except OSError:cleanup_failed=True
         if cleanup_failed:
             if not (isinstance(primary,SectionFailure) and primary.reason in {"CANCELLED","TIMEOUT"}):
                 raise SectionFailure("SECTION_CLEANUP_FAILED") from None

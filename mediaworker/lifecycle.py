@@ -9,6 +9,7 @@ import threading
 import time
 
 from . import storage
+from .downloader.timings import record as record_download_timing
 from .client import WorkerClient, LeaseLost
 from .config import Config
 from .engine.base import Engine, JobContext
@@ -86,6 +87,8 @@ async def _process_job(
             progress=lambda _status, percent: progress.__setitem__(0, min(99, max(0, int(percent)))),
         )
         # Engines are CPU/GPU-bound and synchronous: run off the event loop.
+        download_engine_start=time.monotonic()
+        if job.task_type=="download":record_download_timing("engine",download_engine_start,state="begin")
         phase = time.perf_counter()
         inference = asyncio.create_task(asyncio.to_thread(engine.run, ctx))
         try:
@@ -98,10 +101,14 @@ async def _process_job(
                 await inference
             raise
         process_seconds = time.perf_counter() - phase
+        if job.task_type=="download":record_download_timing("engine",download_engine_start,output_path=result.output_path)
         if lost.is_set():
             raise LeaseLost("lease expired during processing")
         # Confirm ownership immediately before upload, even after a missed beat.
+        preupload_start=time.monotonic()
+        if job.task_type=="download":record_download_timing("preupload",preupload_start,state="begin")
         await client.heartbeat(job.id, job.lease_token)
+        if job.task_type=="download":record_download_timing("preupload",preupload_start)
         if lost.is_set():
             raise LeaseLost("lease expired before upload")
         output_limit = engine.result_byte_limit(job.params, cfg.max_result_bytes)
@@ -120,14 +127,20 @@ async def _process_job(
         output_bytes = result.output_path.stat().st_size if is_gif else 0
         phase = time.perf_counter()
         options = {"client": transfer} if transfer is not None else {}
+        upload_start=time.monotonic()
+        if job.task_type=="download":record_download_timing("upload",upload_start,state="begin",input_path=result.output_path)
         await _transfer_while_owned(
             storage.upload(job.result.put_url, result.output_path, result.content_type, output_limit, **options), lost)
         upload_seconds = time.perf_counter() - phase
+        if job.task_type=="download":record_download_timing("upload",upload_start,input_path=result.output_path)
         extra = {"duration": result.duration} if job.task_type == "download" and result.duration is not None else {}
         phase = time.perf_counter()
         if lost.is_set():
             raise LeaseLost("lease expired before completion")
+        complete_start=time.monotonic()
+        if job.task_type=="download":record_download_timing("complete",complete_start,state="begin")
         await client.complete(job.id, job.lease_token, job.result.key, result.width, result.height, **extra)
+        if job.task_type=="download":record_download_timing("complete",complete_start)
         # Observability must never send fail after an accepted terminal ACK.
         with suppress(Exception):
             if is_gif:

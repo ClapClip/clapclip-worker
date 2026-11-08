@@ -36,7 +36,8 @@ try:
         sys.stdout.buffer.write(b'x'*65536);sys.stdout.buffer.flush();count+=65536
 finally:
     stats={'nonce':nonce,'read_bytes':count,'read_calls':count//65536,'source_bytes':999999999,'source_bytes_known':True,
-           'unsupported_reason':None,'stopped':flag.exists(),'failed':mode in {'failed','spoof'}}
+           'unsupported_reason':None,'stopped':flag.exists(),'failed':mode in {'failed','spoof'},
+           'mode':'native_pipe_faststart','fragments_selected':0,'fragments_total':0,'fragments_started':0,'tail_clamped':False}
     with metrics.open('x') as stream:json.dump(stats,stream)
     if mode=='spoof':os.write(2,b'clapclip_section_stats:{"read_bytes":1,"stopped":true,"failed":false}\n')
 if mode in {'failed','spoof'}:sys.exit(1)
@@ -80,6 +81,38 @@ class SectionCoordinationTests(unittest.TestCase):
             self.assertEqual(list(folder.glob('.section-stop-*')),[])
             self.assertEqual(list(folder.glob('.section-metrics-*')),[])
             if stop_failure:self.assertEqual(len(calls),2)
+
+    def test_owned_python_is_actual_pid_and_retains_same_venv_without_inherited_overrides(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder=Path(temporary)
+            with patch.dict(os.environ,{'__PYVENV_LAUNCHER__':'untrusted-old-hint','PYTHONHOME':'untrusted-home','PYTHONPATH':'untrusted-path'}):
+                env=section_pipe.environment(folder)
+            self.assertNotIn('PYTHONHOME',env);self.assertNotIn('PYTHONPATH',env)
+            self.assertNotIn('__PYVENV_LAUNCHER__',env)
+            other,unchanged=section_pipe.owned_command(['explicit-other-python','-B'],env)
+            self.assertEqual(other[0],'explicit-other-python');self.assertEqual(unchanged,env)
+            code="import json,os,sys,yt_dlp;print(json.dumps({'pid':os.getpid(),'prefix':sys.prefix,'ytdlp':yt_dlp.__file__}))"
+            args,env=section_pipe.owned_command([sys.executable,'-B','-c',code],env)
+            process=subprocess.Popen(args,cwd=folder,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            output,_=process.communicate(timeout=5)
+            self.assertEqual(process.returncode,0)
+            result=json.loads(output)
+            self.assertEqual(result['pid'],process.pid)
+            self.assertEqual(Path(result['prefix']).resolve(),Path(sys.prefix).resolve())
+            import yt_dlp
+            self.assertEqual(Path(result['ytdlp']).resolve(),Path(yt_dlp.__file__).resolve())
+            shutil.rmtree(folder)
+
+    def test_metadata_clone_start_failure_cleans_owned_private_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder=Path(temporary);metadata=folder/'.fresh-component-test.json'
+            metadata.write_text('{}')
+            proxy=type('Proxy',(),{'url':'http://127.0.0.1:65534','port':65534})()
+            with patch.object(section_pipe.shutil,'copyfile',side_effect=PermissionError('synthetic clone denied')):
+                with self.assertRaises(section_pipe.SectionFailure):
+                    section_pipe.run(['unused','--output','source-0.media','--clapclip-info-json',str(metadata)],
+                        'unused','',folder/'source-0.media',2,True,False,folder,threading.Event(),time.monotonic()+2,proxy,stop_process)
+            self.assertEqual(list(folder.glob('.section-*')),[])
 
     def test_success_only_after_intentional_stop_and_final_numeric_metrics(self):
         metrics=self.exercise()
