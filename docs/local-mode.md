@@ -28,9 +28,11 @@ bash scripts/setup-worker.sh install
 bash scripts/setup-worker.sh doctor --load-models
 ```
 
-下载功能还需要 FFmpeg、FFprobe 和 Node.js 在 PATH 中，具体要求见下载部署说明。CUDA 用户按现有 CUDA 部署说明安装对应运行环境，勿同时安装多套 ONNX Runtime。图片引擎仍沿用各自硬件要求：换脸检测支持已安装的 ONNX provider；当前画质增强仅支持 DirectML 或 CUDA，因此 macOS 上该工具会显示未就绪，其余工具可独立使用。
+下载功能还需要 FFmpeg、FFprobe 和 Node.js 在 PATH 中，具体要求见下载部署说明。CUDA 用户按现有 CUDA 部署说明安装对应运行环境，勿同时安装多套 ONNX Runtime。图片引擎仍沿用各自硬件要求：换脸检测支持已安装的 ONNX provider；画质增强在 Windows/Linux 上要求 DirectML/CUDA，在 M 系列 Mac 上支持 CoreML/CPU。需单独放置增强权重；CoreML 可按算子与 CPU 混合执行，不保证整模型 GPU/ANE 加速。
 
 Windows使用上述顺序，是为了避免InsightFace声明的CPU版 `onnxruntime` 覆盖DirectML。`--no-deps`步骤之前必须完成完整requirements安装。此时 `pip check` 可能仍提示缺少名称为 `onnxruntime` 的发行包，实际导入由DirectML发行包提供；不要因此把CPU版装回同一环境。检查 `onnxruntime.get_available_providers()` 应包含 `DmlExecutionProvider`。
+
+Mac 去模糊的固定 NAFNet 权重使用已配置的 CPU；其他增强模型可使用 CoreML/CPU。实际处理性能取决于权重和算子分区。
 
 ## 放置模型
 

@@ -62,9 +62,9 @@ The portable installer uses **ordinary native CPython 3.13** with pinned wheel d
 | --- | --- |
 | Windows | A pinned DirectML environment is provided. CUDA can be installed in a separate environment. |
 | Linux | Install a compatible ONNX Runtime provider. Image enhancement requires CUDA. |
-| macOS / M-series | Use arm64 Python, or universal2 Python running natively as arm64. Intel/Rosetta is unsupported. The current enhancement engine requires DirectML/CUDA and is unavailable on macOS. |
+| macOS / M-series | Use arm64 Python, or universal2 Python running natively as arm64. Intel/Rosetta is unsupported. Enhancement supports CoreML/CPU; licensed enhancement weights must be installed separately. |
 
-A GPU is required for the current enhancement engine. Other tools depend on their installed models and runtime; starting the web interface does not mean every tool is ready.
+Enhancement requires DirectML/CUDA on Windows/Linux; native M-series macOS also supports CoreML/CPU. Other tools depend on their installed models and runtime; starting the web interface does not mean every tool is ready.
 
 ## Local web interface
 
@@ -93,7 +93,7 @@ bash scripts/setup-worker.sh start
 
 The installer preserves existing environments/configuration and creates `.venv-portable` plus private example configurations with independent node/state identities. It does not download models, authenticate, claim jobs, start the worker or install autostart services. Prepare licensed models before `start`; missing capabilities are reported separately from a successful dependency installation. See [the support matrix, system-tool installation and troubleshooting](docs/portable-setup.md).
 
-The portable Windows/Linux environment is a CPU baseline; macOS may also expose CoreML. Enhancement still requires DirectML or CUDA. For an independent Windows GPU environment use the [existing DirectML setup](docs/local-mode.md#本地安装); never mix CPU, DirectML and CUDA distributions in one environment.
+The portable Windows/Linux environment is a CPU baseline; macOS may also expose CoreML. Enhancement uses CoreML/CPU on native M-series macOS and requires DirectML/CUDA on Windows/Linux. For an independent Windows GPU environment use the [existing DirectML setup](docs/local-mode.md#本地安装); never mix CPU, DirectML and CUDA distributions in one environment.
 
 Open **http://127.0.0.1:8765**. Upload images or analyse a supported public media link, choose an available model or format, and save the result. Missing models leave the affected tool unavailable without preventing the workbench from starting.
 

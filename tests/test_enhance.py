@@ -153,7 +153,8 @@ class OnnxModelTests(unittest.TestCase):
         return session
 
     def load(self, session):
-        with patch("onnxruntime.get_available_providers", return_value=["DmlExecutionProvider", "CPUExecutionProvider"]), \
+        with patch("mediaworker.engine.enhance_engine.sys.platform", "win32"), \
+                patch("onnxruntime.get_available_providers", return_value=["DmlExecutionProvider", "CPUExecutionProvider"]), \
                 patch("onnxruntime.InferenceSession", return_value=session) as create:
             model = OnnxModel(Path("offline.onnx"), ["CPUExecutionProvider", "DmlExecutionProvider"])
         return model, create
@@ -170,7 +171,8 @@ class OnnxModelTests(unittest.TestCase):
         self.assertTrue(model.reference_tiles)
 
     def test_no_gpu_never_constructs_a_cpu_session(self):
-        with patch("onnxruntime.get_available_providers", return_value=["CPUExecutionProvider"]), \
+        with patch("mediaworker.engine.enhance_engine.sys.platform", "win32"), \
+                patch("onnxruntime.get_available_providers", return_value=["CPUExecutionProvider"]), \
                 patch("onnxruntime.InferenceSession") as create:
             with self.assertRaisesRegex(RuntimeError, "DirectML or CUDA"):
                 OnnxModel(Path("offline.onnx"), ["DmlExecutionProvider", "CPUExecutionProvider"])
@@ -178,7 +180,7 @@ class OnnxModelTests(unittest.TestCase):
 
     def test_session_that_silently_falls_back_to_cpu_is_rejected(self):
         session = self.session(providers=["CPUExecutionProvider"])
-        with self.assertRaisesRegex(RuntimeError, "GPU provider was not loaded"):
+        with self.assertRaisesRegex(RuntimeError, "provider was not loaded"):
             self.load(session)
 
     def test_float_and_half_input_preprocessing_and_output(self):
@@ -423,7 +425,7 @@ class EnhanceEngineTests(unittest.TestCase):
         engine = EnhanceEngine(self.cfg)
         with patch("mediaworker.engine.enhance_engine.OnnxModel", side_effect=RuntimeError("no GPU")), \
                 self.assertLogs("mediaworker.engine.enhance_engine", level="ERROR"):
-            with self.assertRaisesRegex(RuntimeError, "no enhance GPU models"):
+            with self.assertRaisesRegex(RuntimeError, "no enhance models"):
                 engine.load()
         self.assertEqual(engine.available_models, [])
         with self.assertRaisesRegex(RuntimeError, "not loaded"):

@@ -42,8 +42,9 @@ account authorization, unique node identity and approved models are discovered
 automatically. Temporary/unconfirmed accounts require account setup first.
 
 `portable-cpu-v1` uses CPU and, when available on M-series, CoreML. It advertises
-only loaded/account-authorized faceswap, cutout and download. Enhancement requires
-DirectML/CUDA and is excluded from this profile. CPU packages never overwrite a
+only loaded/account-authorized capabilities. Native M-series macOS also requests
+enhancement with CoreML/CPU and requires licensed enhancement weights; Windows/Linux
+exclude enhancement from this CPU profile and retain the DirectML/CUDA requirement. CPU packages never overwrite a
 GPU environment. Manual GPU deployment and the local workbench remain separate.
 
 ## One backend and the storage boundary

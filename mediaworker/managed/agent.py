@@ -26,8 +26,10 @@ DRAIN_SECONDS = 1800
 
 def prepare_configuration(root: Path, release: Path, api: SetupAPI, *, inspect_engines=True) -> dict:
     host = read_json(root / "host.json")
-    # portable-cpu-v1 deliberately excludes enhance (requires DirectML/CUDA).
-    allowed = api.preflight(host["node_id"], ["faceswap", "cutout", "download"])
+    requested = ["faceswap", "cutout", "download"]
+    if sys.platform == "darwin":
+        requested.insert(2, "enhance")
+    allowed = api.preflight(host["node_id"], requested)
     binding = api.account_binding()
     if host.get("account_binding") and host["account_binding"] != binding:
         raise ManagedError("ACCOUNT_CHANGE_REQUIRES_REVIEW")

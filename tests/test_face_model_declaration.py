@@ -62,7 +62,7 @@ class FaceModelDeclarationTests(unittest.IsolatedAsyncioTestCase):
         engine = EnhanceEngine(self.cfg)
         with patch("mediaworker.engine.enhance_engine.OnnxModel", side_effect=RuntimeError("unavailable fixture")), \
                 self.assertLogs("mediaworker.engine.enhance_engine", level="ERROR"), \
-                self.assertRaisesRegex(RuntimeError, "no enhance GPU models"):
+                self.assertRaisesRegex(RuntimeError, "no enhance models"):
             engine.load()
         self.assertEqual(engine.available_face_models, [])
 

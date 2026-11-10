@@ -9,13 +9,15 @@
 | 系统与架构 | 安装组合 | 能力边界 |
 | --- | --- | --- |
 | Windows 10/11 x64 | CPython 3.13 x64、CPU ONNX Runtime | 换脸、抠图、下载；增强使用另外的 DirectML/CUDA 环境 |
-| macOS 13+ Apple Silicon M 系列 | arm64 CPython 3.13，或以原生 arm64 运行的 universal2 CPython 3.13 | 换脸、抠图、下载；可用 provider 以 doctor 为准 |
+| macOS 13+ Apple Silicon M 系列 | arm64 CPython 3.13，或以原生 arm64 运行的 universal2 CPython 3.13 | 换脸、抠图、增强、下载；需对应权重、工具与授权，provider 以 doctor 为准 |
 | Linux x64 / ARM64 | CPython 3.13、glibc >=2.27，例如 Ubuntu 22.04+ | CPU 基线；增强需要另行配置并验证 CUDA |
 | Intel Mac、Rosetta Python、Windows ARM64/32 位、Alpine/musl、其他架构/旧系统 | 不在支持范围内 | 安装器明确停止，不静默编译或承诺支持 |
 
-CPU provider 能运行的引擎不等于 GPU 加速。macOS 的 CoreML provider 也不等于每个模型都在 GPU/ANE 上完整执行：ONNX Runtime 会按算子支持划分执行。**当前增强引擎只接受 DirectML/CUDA，CPU/CoreML 不满足要求。** 安装器不会改增强算法、放松 provider 门限，或安装 Windows GPU 库到 Mac。
+CPU provider 能运行的引擎不等于 GPU 加速。macOS 的 CoreML provider 也不等于每个模型都在 GPU/ANE 上完整执行：ONNX Runtime 会按算子支持划分执行。**M 系列 Mac 增强接受已配置的 CoreML/CPU；Windows/Linux 保留 DirectML/CUDA 要求。** Mac 的 CoreML 可与 CPU 分担算子，也可显式仅使用 CPU，性能以实际模型为准。安装器不安装 Windows GPU 库到 Mac。
 
 `requirements-portable.txt` 固定 numpy 2.2.6、OpenCV 4.12.0.88、ONNX Runtime 1.23.2、InsightFace 2.0 等主依赖；InsightFace 2.0 提供纯 Python wheel，不需要为普通运行编译旧版 C++ 扩展。pip 只接受依赖 wheel，找不到就停止。现役 Windows 的 `requirements-unified-windows.txt` 独立保留，不会被这个 CPU 组合覆盖。
+
+Mac 的已知模型限制：当前固定的 `nafnet_deblur_512_fp32.onnx` 在 CoreML 上可加载但预测失败，因此去模糊在启动时选择已配置的 CPU；没有配置 CPU 时不声明该模型。其他增强权重可使用 CoreML/CPU 分区。2026-11-10 在 M 系列 Mac 上使用 `worker-models-v1.0.0` 的七个增强权重及检测器，通过生成图片的本地真实推理验收；这不代表用户照片质量评估或线上任务验收。
 
 ## 1. 安装系统工具
 
@@ -66,7 +68,7 @@ bash scripts/setup-worker.sh doctor --load-models
 
 默认检查平台、Python/native imports、实际可用 provider、已配置模型的文件存在性，以及下载工具与编码器。**文件存在只报告 `files_present_unverified`；加 `--load-models` 后真实加载成功才报告对应能力 `ready`。** 它不搜索默认 `.env` 或读取用户素材，不调用模型下载/认证/claim。显式选择分布式配置时，会读取该配置指定的缓存 JSON 核对节点/API 归属，但不输出秘密值，也不改写缓存。诊断失败不打印底层异常原文或配置值。
 
-按 [本地模型清单](local-mode.md#放置模型)取得有使用许可的权重并放入对应目录。换脸需要身份模型和至少一个换脸模型；本地整图换脸与分布式 GIF 还需要人脸检测器。缺检测器时分布式静态裁剪换脸仍可能就绪，GIF 声明必须以加载结果为准。抠图需要对应 ISNet。增强权重与平台门限见[增强部署](distributed-mode.md#增强模型)。本工具没有自动模型下载入口；不从未知链接获取模型。
+按 [本地模型清单](local-mode.md#放置模型)取得有使用许可的权重并放入对应目录。换脸需要身份模型和至少一个换脸模型；本地整图换脸与分布式 GIF 还需要人脸检测器。缺检测器时分布式静态裁剪换脸仍可能就绪，GIF 声明必须以加载结果为准。抠图需要对应 ISNet。增强在 Mac 上使用 CoreML/CPU，其余平台要求 DirectML/CUDA。增强权重与平台门限见[增强部署](distributed-mode.md#增强模型)。本工具没有自动模型下载入口；不从未知链接获取模型。
 
 诊断 JSON 分别包含 `installation_ok`、`providers`、`capabilities`、`ready_capabilities`、`authentication` 和 `execution`。默认退出码 0 **只表示 Python 安装检查通过**，不代表模型、账号或线上媒体成功。需要机器检查配置中的全部能力时使用 `doctor --load-models --require-ready`；缺任一能力返回非零。`execution=not_started_by_doctor` 表示这个命令未启动服务，不是在断言机器上没有其他进程。
 
@@ -80,7 +82,7 @@ bash scripts/setup-worker.sh doctor --load-models
 bash scripts/setup-worker.sh start
 ```
 
-打开终端显示的 `http://127.0.0.1:8765`；可用 `--port 8766` 改端口。先按本机 provider、模型文件和媒体工具筛选，再真实加载引擎。缺增强不会挡住其他已就绪能力，未启用的工具显示不可用。Ctrl+C 停止，不安装后台服务。
+打开终端显示的 `http://127.0.0.1:8765`；可用 `--port 8766` 改端口。先按本机 provider、模型文件和媒体工具筛选，再真实加载引擎。缺增强不会挡住其他已就绪能力，未启用的工具显示不可用。新建的 Mac 配置包含四项能力；已有配置不覆盖，需要在完成模型和依赖准备后显式加入 `enhance,download`。Ctrl+C 停止，不安装后台服务。
 
 ## 5. 私有分布式节点
 

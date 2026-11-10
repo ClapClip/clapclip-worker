@@ -26,7 +26,7 @@ Copy-Item .env.example .env
 .venv-unified\Scripts\ClapClipWoker.exe -m mediaworker run --all-capabilities
 ```
 
-四引擎全部加载后才认证上线。三个AI轮询器和一个下载轮询器共享最多三个OS执行槽，下载最多一个任务；不要另起下载进程。DirectML与CUDA不能装在同一个环境；CUDA环境按 `windows-cuda` 依赖组另建，增强只支持DirectML/CUDA。
+四引擎全部加载后才认证上线。三个AI轮询器和一个下载轮询器共享最多三个OS执行槽，下载最多一个任务；不要另起下载进程。DirectML与CUDA不能装在同一个环境；CUDA环境按 `windows-cuda` 依赖组另建，Windows/Linux 增强只支持 DirectML/CUDA；M 系列 Mac 增强支持 CoreML/CPU。
 
 ### 独立后台常驻
 
@@ -44,7 +44,7 @@ Get-ScheduledTask -TaskName MediaWorker
 
 ## macOS（仅 M 系列）/ Linux
 
-使用普通原生 Python 3.13；Mac 仅支持 M 系列的原生 arm64 Python（universal2 也必须以 arm64 运行），拒绝 Intel 与 Rosetta。运行 `bash scripts/setup-worker.sh install`、`bash scripts/setup-worker.sh doctor --load-models`；填写独立的 `.env.portable` 后，明确运行 `bash scripts/setup-worker.sh start --mode distributed --env-file .env.portable` 才会连接私有队列。平台、wheel 与系统工具要求见[支持矩阵](portable-setup.md#支持范围)。按实际加载结果及服务端授权启用能力；CPU/CoreML 不满足当前增强引擎的 DirectML/CUDA 要求。
+使用普通原生 Python 3.13；Mac 仅支持 M 系列的原生 arm64 Python（universal2 也必须以 arm64 运行），拒绝 Intel 与 Rosetta。运行 `bash scripts/setup-worker.sh install`、`bash scripts/setup-worker.sh doctor --load-models`；填写独立的 `.env.portable` 后，明确运行 `bash scripts/setup-worker.sh start --mode distributed --env-file .env.portable` 才会连接私有队列。平台、wheel 与系统工具要求见[支持矩阵](portable-setup.md#支持范围)。按实际加载结果及服务端授权启用能力；M 系列 Mac 增强支持 CoreML/CPU，但必须先安装增强权重并通过本地加载检查；Windows/Linux 仍要求 DirectML/CUDA。
 
 旧入口 `bash scripts/install-mac.sh` 现在只调用共享安装器，**不再安装或启动 LaunchAgent**。`scripts/uninstall-mac.sh` 仅供主动移除历史 LaunchAgent，不参与新安装。后台服务需要管理员另行选择并授权，安装成功不能当作已常驻或已上线。
 

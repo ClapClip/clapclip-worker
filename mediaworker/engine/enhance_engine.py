@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from dataclasses import dataclass
 from math import lcm
 from pathlib import Path
@@ -17,6 +18,12 @@ from .enhance_portrait import restore_portraits
 
 log = logging.getLogger(__name__)
 GPU_PROVIDERS = {"DmlExecutionProvider", "CUDAExecutionProvider"}
+
+
+def enhance_providers(preferred: list[str], available: list[str]) -> list[str]:
+    """Mac supports CoreML/CPU; other platforms retain GPU-only admission."""
+    supported = GPU_PROVIDERS | ({"CoreMLExecutionProvider", "CPUExecutionProvider"} if sys.platform == "darwin" else set())
+    return list(dict.fromkeys(p for p in preferred if p in supported and p in available))
 
 
 @dataclass(frozen=True)
@@ -43,13 +50,17 @@ MAX_SCALE = {"standard": 4, "fast": 4, "deblur": 1, "animation": 4, "portrait": 
 
 
 class OnnxModel:
-    """启动时加载、复用 GPU 会话；初始化和推理均不允许 CPU 降级。"""
+    """启动时复用会话；Mac 允许显式配置的 CoreML/CPU，其他平台保持 GPU 门控。"""
 
     def __init__(self, path: Path, preferred: list[str]) -> None:
         import onnxruntime as ort
 
         available = set(ort.get_available_providers())
-        candidates = [p for p in preferred if p in GPU_PROVIDERS and p in available]
+        candidates = enhance_providers(preferred, list(available))
+        # This pinned NAFNet export loads with CoreML but fails on its first
+        # prediction on macOS. Select CPU before inference; never retry a job.
+        if sys.platform == "darwin" and path.name == MODEL_SPECS["deblur"][0].filename:
+            candidates = [p for p in candidates if p == "CPUExecutionProvider"]
         failures = []
         self.session = None
         for provider in dict.fromkeys(candidates):
@@ -58,18 +69,24 @@ class OnnxModel:
                     ort.preload_dlls(directory="")
                 options = session_options([provider])
                 options.intra_op_num_threads = 2
-                options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
-                session = ort.InferenceSession(str(path), sess_options=options, providers=[provider])
+                providers = [provider]
+                if provider in GPU_PROVIDERS:
+                    options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
+                elif provider == "CoreMLExecutionProvider" and "CPUExecutionProvider" in candidates:
+                    providers.append("CPUExecutionProvider")
+                elif provider == "CoreMLExecutionProvider":
+                    options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
+                session = ort.InferenceSession(str(path), sess_options=options, providers=providers)
                 session.disable_fallback()
                 if provider not in session.get_providers():
-                    raise RuntimeError("requested GPU provider was not loaded")
+                    raise RuntimeError("requested provider was not loaded")
                 self.session = session
                 self.provider = provider
                 break
             except Exception as exc:
                 failures.append(f"{provider}: {exc}")
         if self.session is None:
-            raise RuntimeError("enhance requires DirectML or CUDA; " + "; ".join(failures))
+            raise RuntimeError("enhance requires DirectML or CUDA, or configured CoreML/CPU on macOS; " + "; ".join(failures))
         inputs, outputs = self.session.get_inputs(), self.session.get_outputs()
         if len(inputs) != 1 or not outputs:
             raise ValueError("enhance requires one RGB model input and an output")
@@ -275,7 +292,7 @@ class EnhanceEngine(Engine):
                 self._detector = None
                 log.exception("enhance face detector unavailable")
         if not self.available_models:
-            raise RuntimeError("no enhance GPU models loaded; check ENHANCE_MODELS_DIR")
+            raise RuntimeError("no enhance models loaded; check ENHANCE_MODELS_DIR")
 
     def run(self, ctx: JobContext) -> RunResult:
         if not self.available_models:

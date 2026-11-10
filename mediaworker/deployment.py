@@ -77,7 +77,7 @@ def write_example(path: Path, node: str, *, local: bool) -> None:
     lines = ["# Generated portable configuration; keep private. Existing files are never replaced.",
              f"NODE_ID={node}", f"NODE_RUNTIME_DIR={state}", f"NODE_TOKEN_FILE={state}/node-token.json",
              f"WORK_DIR={state}/work", f"LOG_FILE={state}/logs/worker.log",
-             "CAPABILITIES=faceswap,cutout,download", "CONCURRENCY=3", "WORKER_AUTO_UPDATE=false",
+             "CAPABILITIES=" + ("faceswap,cutout,enhance,download" if sys.platform == "darwin" else "faceswap,cutout,download"), "CONCURRENCY=3", "WORKER_AUTO_UPDATE=false",
              "FACESWAP_MODEL_AUTO_DOWNLOAD=false", "CUTOUT_MODEL_AUTO_DOWNLOAD=false"]
     if not local:
         lines += ["# Central Web-ClapClip backend manages all website queues.", "API_BASE_URL=https://www.clapclip.net",
@@ -270,8 +270,9 @@ def inspect(cfg, *, mode: str, explicit: bool, load_models: bool = False) -> dic
         if not installed:
             report["capabilities"][cap] = {"status": "unavailable", "reason": "Fix Python imports; Linux OpenCV may need libgl1/libglib2.0-0."}
             continue
-        if cap == "enhance" and not ({"DmlExecutionProvider", "CUDAExecutionProvider"} & set(report["providers"]) & set(cfg.onnx_providers)):
-            report["capabilities"][cap] = {"status": "unsupported_provider", "reason": "Enhance requires DirectML/CUDA; CPU/CoreML does not satisfy this engine."}
+        from .engine.enhance_engine import enhance_providers
+        if cap == "enhance" and not enhance_providers(cfg.onnx_providers, report["providers"]):
+            report["capabilities"][cap] = {"status": "unsupported_provider", "reason": "Enhance requires DirectML/CUDA, or configured CoreML/CPU on macOS."}
             continue
         try:
             files = model_inventory(cfg, cap, mode)

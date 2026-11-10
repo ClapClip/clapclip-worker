@@ -97,7 +97,7 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual(before, path.read_bytes())
             self.assertIn(b"NODE_RUNTIME_DIR=~/.mediaworker/nodes/new-identity", before)
             self.assertIn(b"NODE_TOKEN=\n", before)
-            self.assertNotIn(b"enhance,", before)
+            self.assertEqual(b"enhance," in before, deployment.sys.platform == "darwin")
             if os.name != "nt":
                 self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
@@ -187,11 +187,12 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(deployment.auth_failure("404")["status"], "worker_api_not_found")
         self.assertNotIn("synthetic-secret", json.dumps(deployment.auth_failure("synthetic-secret")))
 
-    def test_doctor_checks_download_config_and_does_not_confuse_coreml_with_enhancement(self):
+    def test_doctor_keeps_gpu_gate_outside_mac(self):
         fake = SimpleNamespace(get_available_providers=lambda: ["CoreMLExecutionProvider", "CPUExecutionProvider"])
         with tempfile.TemporaryDirectory() as temporary:
             with self.config(temporary) as cfg, \
                  patch.object(deployment, "platform_problem", return_value=None), \
+                 patch.object(deployment.sys, "platform", "linux"), \
                  patch.object(deployment, "import_module", return_value=fake), \
                  patch.object(deployment, "model_inventory", return_value={"status": "missing", "missing": ["synthetic.onnx"]}), \
                  patch("mediaworker.downloader.runtime.check_runtime") as runtime, \

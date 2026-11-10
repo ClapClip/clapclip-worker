@@ -27,7 +27,7 @@ def default_onnx_providers() -> list[str]:
     """Preferred ONNX Runtime execution providers for this OS, in priority
     order. They are filtered down to what's actually installed at engine load
     time. Legacy engines may fall back to CPU (engine.base.resolve_providers);
-    enhance filters this list to DirectML/CUDA and requires GPU inference."""
+    enhance allows CoreML/CPU on Mac and requires DirectML/CUDA elsewhere."""
     if sys.platform == "darwin":
         return ["CoreMLExecutionProvider", "CPUExecutionProvider"]
     if sys.platform.startswith("win"):
