@@ -40,6 +40,8 @@ HTTP decoded元数据及HTTPError正文每响应<=8MiB；普通info/文本子进
 
 ## 发布边界
 
+前置URL准入的结构化INVALID_URL/UNSUPPORTED_SITE保留安全公开码，不再因英文message退为UNKNOWN_FAILURE。egress拒绝行为仍为原403/407，端口、DNS全地址公网检查、连接pinning、代理认证、请求及重试预算不变。内部按每次runner调用/phase建立独立receipt，请求在accept时绑定所属scope；只记录固定stage/reason与有界计数（每reason最多1000），不记目标、IP、URL、headers或异常原文。observed_rejections是观察集合，可能包含后续已恢复的子请求；returned/raised只描述runner调用结果，不能把早先某次拒绝当整个任务最终失败原因，也不继承到下一次调用。历史事件无法靠这些新增分类追认具体原因，分类修复不保证来源失败率全部消失。
+
 下载内部阶段日志仅含固定枚举和数值，不含任务身份、来源URL或headers：info、source、source_probe、copy、encode、decode、output_probe、engine、preupload、upload、complete各记begin/end及monotonic耗时，source带原生protocol枚举，engine/upload记本地输入输出字节。现有300秒仍是fresh inspect之后的处理预算；preupload心跳、上传和complete ACK在该预算之外，上传120秒是每I/O超时且保留原重试，日志不将这些时段冒称编码耗时。
 
 原生分片前缀只在本次fresh/同format下启用：HLS读取一次受原代理与8MiB元数据限制的VOD media playlist，以可信EXTINF保留从首片到覆盖窗口的完整原行前缀，KEY/MAP/BYTERANGE/MEDIA-SEQUENCE及默认IV处理继续交原HlsFD。普通缓存、绝对时钟和起始discontinuity序号标签原样保留；真实discontinuity、master/live/START/LL/ad/GAP、缺时长或未知EXT标签明确full_native。实际媒体前缀识别TS或moov在前的MOV后才交固定pipe解封装，不把无MAP推断为TS。

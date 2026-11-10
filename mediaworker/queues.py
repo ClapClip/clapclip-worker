@@ -44,10 +44,15 @@ def queue_failure_report(task_type: str, error: Exception, params: dict) -> Fail
     phase = getattr(error, "phase", params.get("operation", "download"))
     if phase not in {"info", "download", "download_source", "process", "probe", "transcode", "output_probe"}:
         phase = "process"
-    reason = getattr(error, "diagnostic_code", str(error))
+    from .downloader.safety import ServiceError
+    # URL admission happens before a proxy/runner exists. Preserve only the
+    # reviewed public codes, rather than interpreting its human message.
+    admission_code = (error.code if isinstance(error, ServiceError) and isinstance(error.code, str)
+                      and error.code in {"INVALID_URL", "UNSUPPORTED_SITE"} else None)
+    reason = admission_code or getattr(error, "diagnostic_code", str(error))
     if not _safe_error_code(reason):
         reason = _safe_failure_kind(error)
-    message = str(error)
+    message = admission_code or str(error)
     if not _safe_error_code(message):
         message = "MEDIA_UNAVAILABLE"
     return FailureReport(message, include_traceback=False, phase=phase, diagnostic_code=reason)

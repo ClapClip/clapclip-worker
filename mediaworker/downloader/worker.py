@@ -1,5 +1,6 @@
 """Shared download processing for local jobs and the private outbound node."""
 from dataclasses import dataclass, field
+from contextlib import nullcontext
 import json
 import logging
 import math
@@ -261,6 +262,17 @@ class ProcessRunner:
         return args
 
     def run(self, args, directory, cancel, timeout, on_line=None, output_limit=8 * 1024 * 1024, failure_phase="process"):
+        from .egress import EgressProxy
+        # A new receipt belongs to this invocation, including a nested native
+        # fallback. Requests capture it on entry, so late handlers cannot write
+        # into the next run's observations. Observations never replace causes.
+        scope = (self.proxy.diagnostics(failure_phase)
+                 if isinstance(self.proxy, EgressProxy) and failure_phase in {"info", "download_source"}
+                 else nullcontext())
+        with scope:
+            return self._run(args, directory, cancel, timeout, on_line, output_limit, failure_phase)
+
+    def _run(self, args, directory, cancel, timeout, on_line=None, output_limit=8 * 1024 * 1024, failure_phase="process"):
         if "--clapclip-section-limit" in args:
             return self.run_section(args, directory, cancel, on_line, output_limit)
         started=time.monotonic()

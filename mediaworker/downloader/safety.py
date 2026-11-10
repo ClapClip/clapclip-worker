@@ -22,6 +22,27 @@ PLATFORMS = {
     "twitter.com": "X", "x.com": "X", "reddit.com": "Reddit", "redd.it": "Reddit",
 }
 
+# Internal observations only; these never change public response codes or
+# disclose destinations. Cardinality is fixed, even for hostile requests.
+EGRESS_REASON_STAGES = {
+    "AUTH_FAILED": "proxy_auth",
+    "CONNECT_TARGET_INVALID": "request_admission",
+    "HTTP_TARGET_INVALID": "request_admission",
+    "REQUEST_BODY_INVALID": "request_admission",
+    "PORT_REJECTED": "destination_validation",
+    "HOST_REJECTED": "destination_validation",
+    "ADDRESS_REJECTED": "destination_validation",
+    "DNS_EMPTY": "dns",
+    "DNS_FAILED": "dns",
+    "CONNECT_FAILED": "connect",
+}
+
+
+def _egress_error(code, message, reason):
+    error = ServiceError(code, message, 422)
+    error.egress_reason = reason
+    return error
+
 
 def public_ip(value):
     try:
@@ -77,13 +98,15 @@ def validate_url(value, extra_hosts=()):
 
 def public_addresses(host, port, resolver=socket.getaddrinfo):
     if port not in (80, 443) or "%" in host:
-        raise ServiceError("BLOCKED_DESTINATION", "The source could not be reached safely.", 422)
+        reason = "PORT_REJECTED" if port not in (80, 443) else "HOST_REJECTED"
+        raise _egress_error("BLOCKED_DESTINATION", "The source could not be reached safely.", reason)
     try:
         results = resolver(host, port, type=socket.SOCK_STREAM)
     except OSError:
-        raise ServiceError("MEDIA_UNAVAILABLE", "The video source could not be reached.", 422) from None
+        raise _egress_error("MEDIA_UNAVAILABLE", "The video source could not be reached.", "DNS_FAILED") from None
     if not results or any(not public_ip(item[4][0]) for item in results):
-        raise ServiceError("BLOCKED_DESTINATION", "The source could not be reached safely.", 422)
+        reason = "DNS_EMPTY" if not results else "ADDRESS_REJECTED"
+        raise _egress_error("BLOCKED_DESTINATION", "The source could not be reached safely.", reason)
     return results
 
 
@@ -127,4 +150,4 @@ def connect_public(host, port, resolver=socket.getaddrinfo):
             return connection
         except OSError:
             connection.close()
-    raise ServiceError("MEDIA_UNAVAILABLE", "The video source could not be reached.", 422)
+    raise _egress_error("MEDIA_UNAVAILABLE", "The video source could not be reached.", "CONNECT_FAILED")
