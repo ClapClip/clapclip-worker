@@ -9,6 +9,7 @@ from ..downloader.egress import EgressProxy
 from ..downloader.safety import ServiceError, validate_url
 from ..downloader.runtime import check_runtime
 from ..downloader.worker import Config as DownloadConfig, ProcessRunner, finite_number, format_options
+from ..downloader.browser_direct import attach_candidates
 from ..queues import queue_failure_report
 
 # Public current policy entry points.
@@ -60,6 +61,7 @@ class DownloadEngine(Engine):
                 options = format_options(info, job_config.max_width, job_config.max_height)
                 if not options:
                     raise ServiceError("NO_FORMATS", "No supported format is available.", 422)
+                attach_candidates(info, options)
                 data = {"id": ctx.job_id, "title": str(info.get("title") or "Video")[:200],
                         "platform": platform, "duration": duration,
                         "formats": [option["public"] for option in options.values()], "options": options}

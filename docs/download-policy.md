@@ -20,6 +20,10 @@
 
 info JSON中的duration保留来源时长，结果<=512KiB。info complete仍w=1,h=1、无duration，这是元数据动作设计。
 
+本次info可在私有`options[formatId].browserDirect`附三个字段`{url,expiresAt,ext}`，其中expiresAt为ISO UTC、本次入口最长60秒的候选有效期，可识别的源URL到期提示只能缩短它；不保证源URL能被撤销、尚未失效或支持浏览器CORS/地区/IP。仅从本次final-video/已选单资源中筛选声明同时含音视频的HTTPS progressive MP4/WebM，不支持分轨、静音、未知codec、DRM、manifest或凭据/自定义请求头；标准浏览器自带UA/Accept/语言及yt-dlp默认Sec-Fetch-Mode提示可忽略但不向前端传任何headers，实际是否必需仍由匿名fetch结果决定。源URL显式声明签名所需headers时，仅host可候选，其余omit；URL原字节不改写，也不验证密钥或签名。大尺寸/长来源不因此拒绝或强制Worker，浏览器须独立demux、裁切/缩放并验证真实输出；无法处理时沿用原Worker，媒体无固定体积拒绝。
+
+这个hint不是已验证CDN链接：Worker不为它增加DNS/HEAD/媒体请求，不改变40秒inspect预算。主站必须在owner-bound私有投影前完成到期、目标准入及DNS所有地址公网检查，门未实现或不通过时返回无候选；不能将其放进public formats、raw info出口、admin DTO、日志或事件。浏览器仅以`credentials:omit`、`redirect:error`、`referrerPolicy:no-referrer`的真实CORS fetch尝试，不能把URL当裸导航或跟随未校验重定向，也不能声称继承Worker的socket/DNS pinning。媒体入队时主站应pick原有选项字段去掉candidate URL；Worker仍fresh resolve并丢弃该附加字段，不将它作为取源入口。URL仅供短期私有投影，完整原始extractor info不持久化。
+
 媒体必须实际处理/截取，最终ffprobe核对输出duration和尺寸：显示方向含旋转及像素比例归正后，不放大、等比例放入任务包围盒；只有高分辨率源时允许本地缩小，音频组件不套视频过滤。MP4为H.264/AAC，WebM为VP9/Opus，纯音频MP3。编码预留0.1秒处理容器舍入，结果严格<=任务maxDuration，无超限容差。
 
 MP4仅在本地实际probe确认H.264 8bit yuv420p、兼容profile/level、AAC-LC（若选择含音频）、已合规偶数尺寸、SAR1、rotate0、展示起点0及有效整数时间戳时尝试从头streamcopy合并/裁切。copy结果必须重新核对每条stream及容器时长、所选尺寸和完整音视频解码；不符合即保留源文件回退原转码。低帧率/长GOP的copy裁切可能越界，不因参数设了300秒而放行。取消/超时不触发回退，全部阶段共用原deadline；MP3/WebM保持原转码。此路径减少符合条件媒体的本地编码工作，不保证来源传输、上传或端到端更快，也不承诺只下载前300秒来源字节。
