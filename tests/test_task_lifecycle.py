@@ -108,8 +108,32 @@ class LifecycleContractTests(unittest.IsolatedAsyncioTestCase):
         client = type('Client', (), {'heartbeat': AsyncMock(), 'complete': AsyncMock(), 'fail': AsyncMock()})()
         with self.assertLogs('mediaworker.lifecycle', level='ERROR') as logs:
             await lifecycle._process_job(self.cfg, client, {}, claimed)
-        client.fail.assert_awaited_once_with(JOB_ID, LEASE, 'MEDIA_UNAVAILABLE')
+        client.fail.assert_awaited_once_with(JOB_ID, LEASE, 'MEDIA_UNAVAILABLE',
+                                           phase='download', diagnostic_code='RUNTIME_ERROR')
         self.assertNotIn('Traceback', '\n'.join(logs.output))
+        self.assertFalse((self.cfg.work_dir / JOB_ID).exists())
+
+    async def test_download_fresh_info_failure_reaches_real_client_fail_metadata(self):
+        class FailedDownload(DownloadEngine):
+            def run(self, ctx):
+                error = RuntimeError("MEDIA_UNAVAILABLE")
+                error.phase, error.diagnostic_code = "info", "EXTRACTOR_FAILED"
+                raise error
+        job = ClaimedJob(id=JOB_ID, lease_token=LEASE, attempt=1, task_type="download",
+            params={"operation": "download"}, result={"put_url": "https://offline.test/put", "key": "result"})
+        calls = []
+        def respond(request):
+            calls.append((request.url.path, json.loads(request.content)))
+            return httpx.Response(200, json={})
+        async with WorkerClient(self.cfg) as client:
+            await client._http.aclose()
+            client._http = httpx.AsyncClient(base_url=self.cfg.api_base_url, transport=httpx.MockTransport(respond))
+            client._routes.bind(job)
+            with self.assertLogs("mediaworker.lifecycle", level="ERROR"):
+                await lifecycle._process_job(self.cfg, client, {"download": FailedDownload(self.cfg)}, job)
+        self.assertEqual(calls, [("/api/worker/download/fail", {
+            "node_id": self.cfg.node_id, "job_id": JOB_ID, "lease_token": LEASE,
+            "error": "MEDIA_UNAVAILABLE", "phase": "info", "diagnostic_code": "EXTRACTOR_FAILED"})])
         self.assertFalse((self.cfg.work_dir / JOB_ID).exists())
 
     async def test_slot_is_released_after_an_unexpected_attempt_error(self):
@@ -229,7 +253,8 @@ class LeaseRaceTests(unittest.IsolatedAsyncioTestCase):
         if fenced:
             client.fail.assert_not_awaited()
         else:
-            client.fail.assert_awaited_once_with(JOB_ID,LEASE,"CANCELLED")
+            client.fail.assert_awaited_once_with(JOB_ID,LEASE,"CANCELLED",
+                                               phase="process", diagnostic_code="UNKNOWN_FAILURE")
         if stage == "engine":
             self.assertTrue(wrote_after_cancel.is_set())
         else:

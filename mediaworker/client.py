@@ -12,7 +12,7 @@ import httpx
 from .config import Config
 from .redaction import redact
 from .models import ClaimedJob, ClaimResponse
-from .queues import QueueRoutes
+from .queues import QueueRoutes, download_failure_metadata
 from .single_instance import FileLock, WorkerAlreadyRunning
 
 log = logging.getLogger(__name__)
@@ -128,10 +128,14 @@ class WorkerClient:
             raise LeaseLost("completion rejected: lease is stale")
         self._job_routes.pop(job_id, None)
 
-    async def fail(self, job_id: str, lease_token: str, error: str) -> None:
+    async def fail(self, job_id: str, lease_token: str, error: str, *,
+                   phase: str | None = None, diagnostic_code: str | None = None) -> None:
+        metadata = (download_failure_metadata(phase, diagnostic_code)
+                    if job_id in self._job_routes and (phase is not None or diagnostic_code is not None) else {})
         await self._post(
             self._job_path(job_id, "fail"),
-            {"node_id": self._cfg.node_id, "job_id": job_id, "lease_token": lease_token, "error": redact(error)[:500]},
+            {"node_id": self._cfg.node_id, "job_id": job_id, "lease_token": lease_token,
+             "error": redact(error)[:500], **metadata},
         )
         self._job_routes.pop(job_id, None)
 

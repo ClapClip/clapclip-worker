@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import patch, Mock
+from types import SimpleNamespace
 
 import httpx
 from mediaworker.config import Config
@@ -16,6 +17,63 @@ from mediaworker.engine.download_engine import (
 )
 from mediaworker.downloader.safety import ServiceError
 from mediaworker import storage
+from mediaworker.client import WorkerClient
+
+
+class FailureMetadataWireTests(unittest.IsolatedAsyncioTestCase):
+    async def payload(self, task_type, metadata):
+        cfg = Config.from_env(load_env=False)
+        cfg.api_base_url, cfg.node_id, cfg.node_token = "https://offline.test", "fixture-node", "fixture-token"
+        calls = []
+        def respond(request):
+            calls.append((request.url.path, json.loads(request.content)))
+            return httpx.Response(200, json={})
+        async with WorkerClient(cfg) as client:
+            await client._http.aclose()
+            client._http = httpx.AsyncClient(base_url=cfg.api_base_url, transport=httpx.MockTransport(respond))
+            client._routes.bind(SimpleNamespace(id="fixture-job", task_type=task_type))
+            await client.fail("fixture-job", "fixture-lease", "MEDIA_UNAVAILABLE", **metadata)
+            self.assertNotIn("fixture-job", client._job_routes)
+        return calls
+
+    async def test_download_fail_sends_safe_metadata_separate_from_public_error(self):
+        calls = await self.payload("download", {"phase": "info", "diagnostic_code": "EXTRACTOR_FAILED"})
+        self.assertEqual(calls, [("/api/worker/download/fail", {
+            "node_id": "fixture-node", "job_id": "fixture-job", "lease_token": "fixture-lease",
+            "error": "MEDIA_UNAVAILABLE", "phase": "info", "diagnostic_code": "EXTRACTOR_FAILED"})])
+
+    async def test_unknown_or_private_metadata_is_replaced_not_serialized(self):
+        for phase, reason in (("https://signed.invalid/?token=canary", "ARBITRARY_SAFE_LOOKING"),
+                              (["info"], {"Cookie": "synthetic-canary"}), (None, "EXTRACTOR_FAILED")):
+            with self.subTest(kind=type(phase).__name__):
+                calls = await self.payload("download", {"phase": phase, "diagnostic_code": reason})
+                self.assertEqual(calls[0][1]["phase"], "unknown")
+                self.assertEqual(calls[0][1]["diagnostic_code"], reason if reason == "EXTRACTOR_FAILED" else "UNKNOWN_FAILURE")
+                self.assertNotIn("canary", json.dumps(calls))
+
+    async def test_legacy_and_AI_payloads_remain_exactly_unchanged(self):
+        for task_type, metadata in (("download", {}), ("cutout", {"phase": "info", "diagnostic_code": "DNS_FAILED"})):
+            calls = await self.payload(task_type, metadata)
+            prefix = "/api/worker/download" if task_type == "download" else "/api/worker"
+            self.assertEqual(calls, [(prefix+"/fail", {"node_id": "fixture-node", "job_id": "fixture-job",
+                                                     "lease_token": "fixture-lease", "error": "MEDIA_UNAVAILABLE"})])
+
+    async def test_old_server_rejection_does_not_strip_metadata_and_replay(self):
+        cfg = Config.from_env(load_env=False)
+        cfg.api_base_url, cfg.node_token = "https://offline.test", "fixture-token"
+        calls = []
+        def reject(request):
+            calls.append(json.loads(request.content))
+            return httpx.Response(422, json={})
+        async with WorkerClient(cfg) as client:
+            await client._http.aclose()
+            client._http = httpx.AsyncClient(base_url=cfg.api_base_url, transport=httpx.MockTransport(reject))
+            client._routes.bind(SimpleNamespace(id="fixture-job", task_type="download"))
+            with self.assertRaises(httpx.HTTPStatusError):
+                await client.fail("fixture-job", "fixture-lease", "MEDIA_UNAVAILABLE", phase="info", diagnostic_code="EGRESS_REJECTED")
+            self.assertEqual(len(calls), 1)
+            self.assertIn("fixture-job", client._job_routes)
+
 
 
 class QueueEngineTests(unittest.TestCase):

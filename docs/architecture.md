@@ -73,4 +73,6 @@ portable 启动在本机 OS 锁内按实际 provider/模型/工具筛选能力�
 
 显式 faceswap GIF 的专用异常通过现有 fail.error 字符串发送 NO_USABLE_TARGET_FACE，含义为“未检测到可用于换脸的人脸”，不是断言素材绝对无人脸。不新增 JSON 字段，不放松检测或身份门限。仅日志记录总帧数、无可用检测帧数及身份拒绝帧数，不记录图像、关键点、身份特征或媒体路径。网站需兼容该稳定码和旧版精确文本，并自行决定确定性失败的终态及退款；Worker 不擅自修改网站记录。
 
-下载未知错误按固定异常类型映射为 INVALID_SOURCE_JSON、NETWORK_TIMEOUT、NETWORK_PROTOCOL_ERROR、NETWORK_ERROR、OPERATION_TIMEOUT、LOCAL_IO_ERROR、INVALID_DATA、RUNTIME_ERROR 或 UNKNOWN_FAILURE；不复制异常原文或任意类名。公开错误仍沿用既有安全码，类别仅进入脱敏日志。
+下载未知错误按固定异常类型映射为 INVALID_SOURCE_JSON、NETWORK_TIMEOUT、NETWORK_PROTOCOL_ERROR、NETWORK_ERROR、OPERATION_TIMEOUT、LOCAL_IO_ERROR、INVALID_DATA、RUNTIME_ERROR 或 UNKNOWN_FAILURE；不复制异常原文或任意类名。公开错误仍沿用既有安全码，类别经固定白名单进入日志及下载失败元数据。
+
+下载 fail ACK 可附带固定白名单的 `phase` 与 `diagnostic_code`，分别取自本次 `FailureReport`；未知值收敛为 `unknown` / `UNKNOWN_FAILURE`，公开 `error` 保持原值。仅已绑定的下载队列携带这些字段，AI 与未提供元数据的旧调用维持原 payload。出口拒绝的观测集合不当作最终失败原因；不转发 URL、headers、Cookie 或来源 stderr，也不因旧后台拒绝字段而剥离重发 ACK。旧任务不会回填或重放。

@@ -162,7 +162,9 @@ async def _process_job(
         else:
             log.error("job %s failed (phase=%s, reason=%s)", job.id, failure.phase, failure.diagnostic_code)
         try:
-            await client.fail(job.id, job.lease_token, failure.message)
+            metadata = ({"phase": failure.phase, "diagnostic_code": failure.diagnostic_code}
+                        if job.task_type == "download" else {})
+            await client.fail(job.id, job.lease_token, failure.message, **metadata)
         except Exception:
             log.warning("could not report failure for job %s", job.id)
     finally:

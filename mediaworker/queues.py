@@ -9,6 +9,30 @@ from .models import ClaimedJob
 from .engine.base import FailureReport
 
 
+DOWNLOAD_FAILURE_PHASES = frozenset({
+    "info", "download", "download_source", "process", "probe", "transcode",
+    "output_probe", "upload", "queue", "lease", "unknown",
+})
+DOWNLOAD_DIAGNOSTIC_CODES = frozenset({
+    "UNKNOWN_FAILURE", "INVALID_URL", "UNSUPPORTED_SITE", "INVALID_SOURCE_JSON", "INVALID_FRESH_METADATA",
+    "EGRESS_REJECTED", "HTTP_RATE_LIMITED", "HTTP_TRANSIENT", "HTTP_FORBIDDEN", "SOURCE_RESTRICTED",
+    "FORMAT_UNAVAILABLE", "UNSUPPORTED_MEDIA", "EXTRACTOR_FAILED", "LOCAL_PROCESS_FAILED", "PROCESS_OUTPUT_LIMIT",
+    "DNS_FAILED", "NETWORK_TIMEOUT", "NETWORK_PROTOCOL_ERROR", "NETWORK_ERROR", "OPERATION_TIMEOUT",
+    "LOCAL_IO_ERROR", "INVALID_DATA", "RUNTIME_ERROR", "CANCELLED", "TIMEOUT", "MEDIA_UNAVAILABLE",
+    "SERVICE_UNAVAILABLE", "DURATION_LIMIT", "RESOLUTION_LIMIT", "INVALID_LIMITS",
+    "QUEUE_TIMEOUT", "LEASE_EXPIRED", "LEASE_RETRY_EXHAUSTED", "JOB_EXPIRED",
+})
+
+
+def download_failure_metadata(phase, diagnostic_code) -> dict:
+    """Forward only reviewed metadata, separately from the public error code."""
+    return {
+        "phase": phase if isinstance(phase, str) and phase in DOWNLOAD_FAILURE_PHASES else "unknown",
+        "diagnostic_code": (diagnostic_code if isinstance(diagnostic_code, str)
+                            and diagnostic_code in DOWNLOAD_DIAGNOSTIC_CODES else "UNKNOWN_FAILURE"),
+    }
+
+
 class QueueRoutes:
     def __init__(self, download_prefix: str) -> None:
         if not download_prefix.startswith("/api/worker/") or ".." in download_prefix.split("/"):

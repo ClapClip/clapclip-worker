@@ -13,4 +13,6 @@ onnx==1.22.0
 scipy==1.18.1
 scikit-image==0.26.0
 pycognito==2024.5.1
-yt-dlp[default]==2026.8.19
+yt-dlp[default]==2026.10.26
+certifi>=2026.10.19
+Brotli>=1.2.1; implementation_name == "cpython"
