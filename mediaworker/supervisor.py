@@ -48,7 +48,9 @@ def snapshot(mode: str, shell: Path) -> list[dict]:
         "$ErrorActionPreference='Stop'; "
         "@(Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='ClapClipWoker.exe'\" "
         "| Where-Object { $_.CommandLine -match '(?i)(?:^|\\s)-m\\s+mediaworker\\s+"
-        + mode + "(?:\\s|$)' } "
+        + mode + "(?:\\s|$)'"
+        + (" -or $_.CommandLine -match '(?i)[\\\\/]mediaworker[\\\\/]model_process\\.py\"?\\s+--model-child(?:\\s|$)'" if mode == "run" else "")
+        + " } "
         "| Select-Object ProcessId,ParentProcessId,ExecutablePath) | ConvertTo-Json -Compress"
     )
     result = subprocess.run(

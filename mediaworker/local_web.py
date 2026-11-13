@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import base64
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -17,8 +16,8 @@ from urllib.parse import urlsplit
 from .config import Config
 from .engine.base import JobContext
 from .images import validate_image
-from .scheduling import acquire_worker_slot
 from .single_instance import FileLock
+from .execution import ExecutionResources
 
 TOOLS = ("faceswap", "cutout", "enhance", "download")
 ASSETS = Path(__file__).with_name("web")
@@ -48,14 +47,30 @@ class Workbench:
         self.engines = engines if engines is not None else {}
         self.states = {tool: ("ready" if tool in self.engines else "loading") for tool in TOOLS}
         self.jobs, self.lock = {}, threading.RLock()
-        self.pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="local-job")
-        self.download_lock = threading.Lock()
+        self.resources = ExecutionResources(cfg, self.engines)
+        self.pool = self.resources.executor
         self.token = secrets.token_urlsafe(32)
         self.closing = threading.Event()
+        self.loading = engines is None
+        self.wakeup = threading.Event()
+        self.dispatcher = threading.Thread(target=self._dispatch, name="local-dispatch", daemon=True)
+        self.dispatcher.start()
 
     def load(self):
+        with self.lock:
+            if self.resources.active or self.resources.growing:
+                raise RuntimeError("cannot load primary engines while tasks or context construction are owned")
+            self.loading = True
+        try:
+            self._load_engines()
+        finally:
+            with self.lock:
+                self.loading = False
+            self.wakeup.set()
+
+    def _load_engines(self):
         from .engine.registry import ENGINE_FACTORIES
-        from .local_faceswap import LocalFaceSwap
+        from .model_process import ModelProcess
         for tool in TOOLS:
             if self.closing.is_set():
                 return
@@ -64,12 +79,13 @@ class Workbench:
                     self.states[tool] = "unavailable"
                 continue
             try:
-                engine = LocalFaceSwap(self.cfg) if tool == "faceswap" else ENGINE_FACTORIES[tool](self.cfg)
+                engine = ModelProcess(self.cfg, "faceswap", local=True) if tool == "faceswap" else ENGINE_FACTORIES[tool](self.cfg)
                 engine.load()
                 if tool == "enhance" and not engine.available_models:
                     raise RuntimeError("no installed enhancement models")
                 with self.lock:
                     self.engines[tool], self.states[tool] = engine, "ready"
+                    self.resources.register(tool, engine)
             except Exception:
                 log.exception("local engine unavailable: %s", tool)
                 with self.lock:
@@ -79,7 +95,7 @@ class Workbench:
         with self.lock:
             self.clean()
             enhance = self.engines.get("enhance")
-            faces = list(getattr(enhance, "_faces", {})) if getattr(enhance, "_detector", None) is not None else []
+            faces = list(getattr(enhance,"available_face_models",[])) if hasattr(enhance,"available_face_models") else list(getattr(enhance, "_faces", {})) if getattr(enhance, "_detector", None) is not None else []
             tools = {}
             for tool in TOOLS:
                 models = self.engines[tool].available_models if tool in self.engines else []
@@ -89,7 +105,8 @@ class Workbench:
                 if tool == "enhance" and self.states[tool] == "ready" and not models:
                     tools[tool]["state"] = "unavailable"
             return {"tools": tools,
-                    "faceModels": faces, "maxImageBytes": self.cfg.max_image_bytes, "concurrency": 3}
+                    "faceModels": faces, "maxImageBytes": self.cfg.max_image_bytes,
+                    "concurrency": self.resources.limit, "execution": self.resources.snapshot()}
 
     def clean(self):
         # Only terminal directories created by this server instance are removed.
@@ -108,7 +125,7 @@ class Workbench:
                 raise ValueError("工具未就绪，请检查模型与运行环境")
             if len(self.jobs) >= 32:
                 raise ValueError("本次会话任务已满，请清理结果后重试")
-            if sum(j.status in {"queued", "running"} for j in self.jobs.values()) >= 9:
+            if sum(j.status in {"queued", "running"} for j in self.jobs.values()) >= max(9, self.resources.limit):
                 raise ValueError("等待中的任务较多，请稍后重试")
             params = data.get("params", {})
             if not isinstance(params, dict):
@@ -157,32 +174,48 @@ class Workbench:
                     inputs[name] = path
                 job = Job(identifier, tool, params, directory, inputs)
                 self.jobs[identifier] = job
-                self.pool.submit(self.execute, job)
+                self.wakeup.set()
                 return self.public(job)
             except BaseException:
                 shutil.rmtree(directory, ignore_errors=True)
                 raise
 
-    def execute(self, job):
-        slot, download = None, False
+    def _dispatch(self):
+        while not self.closing.is_set():
+            admission = None
+            with self.lock:
+                for job in self.jobs.values():
+                    if job.status == "queued" and job.cancel.is_set():
+                        job.status = "cancelled"
+                pending = [job for job in self.jobs.values() if job.status == "queued"]
+                if pending and not self.loading:
+                    try:
+                        admission = self.resources.try_acquire(list(dict.fromkeys(job.tool for job in pending)))
+                    except OSError:
+                        # A temporary lock-file error must not kill dispatch or
+                        # strand queued jobs. No job has been submitted yet.
+                        log.warning("local admission unavailable reason=resource_io")
+                    if admission is not None:
+                        job = next(job for job in pending if job.tool == admission.capability)
+                        job.status = "running"
+                        admission.claimed(job)
+                        try:
+                            self.pool.submit(self.execute, job, admission)
+                        except BaseException:
+                            admission.release()
+                            job.status, job.error = "failed", "无法启动任务"
+            if admission is None:
+                self.wakeup.wait(.05)
+                self.wakeup.clear()
+
+    def execute(self, job, admission):
         try:
-            if job.tool == "download":
-                while not job.cancel.is_set():
-                    download = self.download_lock.acquire(timeout=.2)
-                    if download:
-                        break
-            while not job.cancel.is_set():
-                slot = acquire_worker_slot(self.cfg.runtime_dir)
-                if slot:
-                    break
-                job.cancel.wait(.2)
             if job.cancel.is_set():
                 return
-            job.status = "running"
             def progress(_status, percent):
                 job.progress = max(0, min(99, int(percent)))
             context = JobContext(job.id, job.tool, job.params, job.inputs, job.workdir, job.cancel, progress)
-            result = self.engines[job.tool].run(context)
+            result = admission.engine.run(context)
             if not result.output_path.resolve().is_relative_to(job.workdir.resolve()):
                 raise RuntimeError("engine output outside job directory")
             if job.cancel.is_set():
@@ -196,10 +229,8 @@ class Workbench:
         finally:
             if job.cancel.is_set():
                 job.result, job.status = None, "cancelled"
-            if slot:
-                slot.release()
-            if download:
-                self.download_lock.release()
+            admission.release()
+            self.wakeup.set()
 
     def public(self, job):
         data = {"id": job.id, "status": job.status, "progress": job.progress, "error": job.error}
@@ -212,10 +243,15 @@ class Workbench:
 
     def close(self):
         self.closing.set()
+        self.wakeup.set()
         with self.lock:
             for job in self.jobs.values():
                 job.cancel.set()
+                if job.status == "queued":
+                    job.status = "cancelled"
+        self.dispatcher.join()
         self.pool.shutdown(wait=True, cancel_futures=False)
+        self.resources.close()
         for job in self.jobs.values():
             shutil.rmtree(job.workdir, ignore_errors=True)
 

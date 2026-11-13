@@ -18,7 +18,7 @@ Copy-Item .venv-unified\Scripts\python.exe .venv-unified\Scripts\ClapClipWoker.e
 Copy-Item .env.example .env
 ```
 
-编辑 `.env`：保持 `API_BASE_URL=https://www.clapclip.net`，填写节点身份和匹配的 Cognito 配置，或使用本机已有 `NODE_TOKEN`。启用 `CAPABILITIES=faceswap,cutout,enhance,download`，设置 `CONCURRENCY=3`。账号及节点需在中央后台获准使用相应能力。密码只由 Cognito SDK 发送，中央后台收到 ID token；勿把密码放入命令行或提交。
+编辑 `.env`：保持 `API_BASE_URL=https://www.clapclip.net`，填写节点身份和匹配的 Cognito 配置，或使用本机已有 `NODE_TOKEN`。启用 `CAPABILITIES=faceswap,cutout,enhance,download`，设置 `CONCURRENCY=30`、`DOWNLOAD_CONCURRENCY=10`、`AI_CONTEXTS=2`。账号及节点需在中央后台获准使用相应能力。密码只由 Cognito SDK 发送，中央后台收到 ID token；勿把密码放入命令行或提交。
 
 按[本地部署](local-mode.md#放置模型)准备换脸和抠图模型，增强模型见下表。首次启动可下载经过哈希验证的缺失换脸/抠图权重；使用自己的私有模型仓库时填写只读 `GITHUB_TOKEN`。公开模型仓库无需token。增强权重需自行安装。
 
@@ -26,7 +26,7 @@ Copy-Item .env.example .env
 .venv-unified\Scripts\ClapClipWoker.exe -m mediaworker run --all-capabilities
 ```
 
-四引擎全部加载后才认证上线。三个AI轮询器和一个下载轮询器共享最多三个OS执行槽，下载最多一个任务；不要另起下载进程。DirectML与CUDA不能装在同一个环境；CUDA环境按 `windows-cuda` 依赖组另建，Windows/Linux 增强只支持 DirectML/CUDA；M 系列 Mac 增强支持 CoreML/CPU。
+四引擎全部加载后才认证上线。默认三十个AI轮询器和十个下载轮询器共享最多三十个OS执行槽，下载最多十个任务；不要另起下载进程。DirectML与CUDA不能装在同一个环境；CUDA环境按 `windows-cuda` 依赖组另建，Windows/Linux 增强只支持 DirectML/CUDA；M 系列 Mac 增强支持 CoreML/CPU。
 
 ### 独立后台常驻
 

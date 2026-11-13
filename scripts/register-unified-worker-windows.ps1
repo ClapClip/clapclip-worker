@@ -34,6 +34,6 @@ $Settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) 
   -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden
 if ($PSCmdlet.ShouldProcess($TaskName, 'Register one independent background Worker for all configured capabilities (no startup trigger)')) {
   Register-ScheduledTask -TaskName $TaskName -Action $Action -Principal $Principal -Settings $Settings `
-    -Description 'One DirectML runtime: faceswap, cutout, enhance and download. Shared three slots; one download poller.' -Force:$ReplaceExisting | Out-Null
+    -Description 'One DirectML runtime: faceswap, cutout, enhance and download. Shared thirty slots; up to ten downloads.' -Force:$ReplaceExisting | Out-Null
   Write-Output "Registered '$TaskName'. Start it with Start-ScheduledTask -TaskName '$TaskName'."
 }

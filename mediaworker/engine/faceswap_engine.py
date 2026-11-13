@@ -12,7 +12,7 @@ import numpy as np
 
 from ..config import Config
 from ..images import validate_image
-from .base import Engine, JobContext, RunResult, resolve_providers, session_options
+from .base import Engine, JobContext, RunResult, resolve_providers, session_options, context_requirements
 
 log = logging.getLogger(__name__)
 
@@ -152,20 +152,55 @@ class FaceSwapEngine(Engine):
 
     task_type = "faceswap"
 
-    def __init__(self, cfg: Config) -> None:
+    def __init__(self, cfg: Config, model_keys: list[str] | None = None, enable_gif: bool = True) -> None:
         self._cfg = cfg
         self._recognition = None
         self._models: dict[str, Any] = {}
         self._model_paths = _swap_model_paths(cfg)
+        if model_keys is not None:
+            self._model_paths = {key: path for key, path in self._model_paths.items() if key in model_keys}
         self._model_lock = threading.Lock()
         self._inference_lock = threading.RLock()
         self._gif = None
+        self._enable_gif = enable_gif
 
     def _infer(self, operation, *args, **kwargs):
         # DirectML forbids simultaneous Run calls on the same session. Static
         # crops and GIF frames share recognition/swap sessions across pollers.
         with self._inference_lock:
             return operation(*args, **kwargs)
+
+    def _context_model(self):
+        return "hyperswap_256_b" if "hyperswap_256_b" in self._models else next(iter(self._models))
+
+    def context_spec(self, params):
+        model = params.get("model", "inswapper_128")
+        animated = params.get("mode") == "gif" or params.get("targetMedia") == "gif"
+        if not isinstance(model, str) or model not in self._models or animated and self._gif is None:
+            return None
+        return model, animated
+
+    @property
+    def execution_sessions(self):
+        sessions = {key: getattr(model, "session", model) for key, model in self._models.items()}
+        if self._recognition is not None:
+            sessions["recognition"] = getattr(self._recognition, "session", self._recognition)
+        if self._gif is not None:
+            sessions["detector"] = self._gif.detector
+        return sessions
+
+    def context_requirements(self, spec=None):
+        models, animated = ([spec[0]],spec[1]) if spec is not None else (list(self._models),self._gif is not None)
+        paths = [*[self._model_paths[model] for model in models], self._cfg.faceswap_models_dir / IDENTITY_MODEL]
+        if animated:
+            paths.append(self._cfg.enhance_models_dir / "yoloface_8n.onnx")
+        return context_requirements(self._cfg, paths, self.execution_sessions)
+
+    def spawn_context(self, spec=None):
+        model, animated = spec if spec is not None else (self._context_model(), False)
+        engine = type(self)(self._cfg, model_keys=[model], enable_gif=animated)
+        engine.load()
+        return engine
 
     def load(self) -> None:
         installed = [key for key, path in self._model_paths.items() if path.is_file()]
@@ -204,6 +239,8 @@ class FaceSwapEngine(Engine):
                 log.exception("swap model unavailable: %s", key)
         if not self._models:
             raise RuntimeError("no swap models could be loaded")
+        if not self._enable_gif:
+            return
         from .faceswap_gif import GifFaceSwap
         try:
             animated = GifFaceSwap(self._cfg, self)

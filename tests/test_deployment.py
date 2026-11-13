@@ -73,14 +73,19 @@ class DeploymentTests(unittest.TestCase):
     def test_configuration_does_not_read_default_dotenv_or_inherit_another_identity(self):
         with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {
             "NODE_ID": "old-node", "NODE_TOKEN": "synthetic-secret", "WORKER_AUTO_UPDATE": "true",
-            "FACESWAP_MODEL_AUTO_DOWNLOAD": "true", "PATH": os.environ.get("PATH", "")}, clear=True), \
+            "FACESWAP_MODEL_AUTO_DOWNLOAD": "true", "AI_CONTEXTS":"30", "PATH": os.environ.get("PATH", "")}, clear=True), \
              patch.object(Path, "home", return_value=Path(temporary)), patch("dotenv.load_dotenv") as load:
             before = os.environ.copy()
             with deployment.configuration(None) as cfg:
                 self.assertEqual(cfg.node_token, "")
                 self.assertNotEqual(cfg.node_id, "old-node")
+                self.assertEqual(cfg.ai_contexts,2)
                 self.assertFalse(cfg.auto_update or cfg.faceswap_model_auto_download or cfg.cutout_model_auto_download)
             self.assertEqual(dict(os.environ), before)
+            explicit=Path(temporary)/'.env.explicit';explicit.write_text('AI_CONTEXTS=4\nCONCURRENCY=30\n')
+            with deployment.configuration(explicit) as cfg:
+                self.assertEqual((cfg.ai_contexts,cfg.concurrency),(4,30))
+            self.assertEqual(dict(os.environ),before)
             load.assert_not_called()
 
     def test_configuration_does_not_expand_passwords_from_ambient_environment(self):
@@ -234,8 +239,11 @@ class DeploymentTests(unittest.TestCase):
                 client.__aenter__ = AsyncMock(return_value=Mock())
                 client.__aexit__ = AsyncMock(return_value=False)
                 groups = Mock(return_value=[])
+                from mediaworker.memory import MemoryEstimate
+                ready_engine = Mock(available_models=[], execution_sessions={},
+                                    context_requirements=Mock(return_value=MemoryEstimate()))
                 with patch("mediaworker.model_registry.sync_models", return_value=cfg.capabilities), \
-                     patch.object(runner, "build_registry", return_value={"faceswap": Mock(), "download": Mock()}), \
+                     patch.object(runner, "build_registry", return_value={"faceswap": ready_engine, "download": Mock()}), \
                      patch.object(runner, "bootstrap_node_token", new=AsyncMock(side_effect=authenticate)), \
                      patch.object(runner, "WorkerClient", return_value=client), \
                      patch.object(runner, "KeepAwake"), patch.object(runner, "_install_signal_handlers"), \

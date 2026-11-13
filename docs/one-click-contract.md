@@ -141,9 +141,9 @@ drains and restarts through the OS to load new code; its stable launcher restore
 the prior selection if the new manager fails before startup acknowledgement.
 This includes a short gap; it is not zero downtime or Python hot reload.
 
-Credentials, binding, node-token cache, models, shared three execution slots,
-control state and work directories live outside releases. Download keeps one
-poller; all capabilities share at most three slots. GIF/media and fencing/lease
+Credentials, binding, node-token cache, models, shared execution slots,
+control state and work directories live outside releases. All capabilities share
+at most 30 slots; downloads additionally share a host quota of at most 10. GIF/media and fencing/lease
 contracts remain unchanged. A control watcher requests drain even while update
 preparation is downloading files.
 The runtime independently verifies its manager's executable and creation time.

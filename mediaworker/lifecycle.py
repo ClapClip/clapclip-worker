@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 import logging
 import shutil
@@ -52,6 +53,7 @@ async def _process_job(
     client: WorkerClient,
     registry: dict[str, Engine],
     job: ClaimedJob,
+    *, executor=None,
 ) -> None:
     engine = registry.get(job.task_type)
     workdir = cfg.work_dir / job.id / job.lease_token
@@ -63,6 +65,7 @@ async def _process_job(
     reports_progress = job.task_type == "download" or is_gif
     heartbeat = asyncio.create_task(_heartbeat_loop(client, job, stop, lost, cancel, progress if reports_progress else None))
     transfer = None
+    owned_executor = None
     try:
         workdir.mkdir(parents=True, exist_ok=True)
         if engine is None:  # shouldn't happen: we only claim our capabilities
@@ -90,15 +93,37 @@ async def _process_job(
         download_engine_start=time.monotonic()
         if job.task_type=="download":record_download_timing("engine",download_engine_start,state="begin")
         phase = time.perf_counter()
-        inference = asyncio.create_task(asyncio.to_thread(engine.run, ctx))
+        if executor is None:
+            owned_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="leased-task")
+            executor = owned_executor
+        # Keep the concurrent Future: cancelling an asyncio wrapper does not
+        # prove a native worker thread exited.
+        native_inference = executor.submit(engine.run, ctx)
+        inference = asyncio.wrap_future(native_inference)
         try:
             result = await asyncio.shield(inference)
         except asyncio.CancelledError:
             cancel.set()
             # A Python thread cannot be cancelled. Wait until it stops writing
             # before removing its attempt directory or closing shared clients.
-            with suppress(Exception):
-                await inference
+            while not native_inference.done():
+                try:
+                    if inference.cancelled():
+                        inference = asyncio.wrap_future(native_inference)
+                    await asyncio.shield(inference)
+                except asyncio.CancelledError:
+                    # Repeated task.cancel() must not cancel the join or free
+                    # the context/attempt while native Run still writes.
+                    cancel.set()
+                except Exception:
+                    break
+            def consume_joined_error(future):
+                if not future.cancelled():
+                    with suppress(BaseException):
+                        future.exception()
+            # The native Future may finish just before wrap_future schedules
+            # its result on the loop; consume that eventual exception too.
+            inference.add_done_callback(consume_joined_error)
             raise
         process_seconds = time.perf_counter() - phase
         if job.task_type=="download":record_download_timing("engine",download_engine_start,output_path=result.output_path)
@@ -168,6 +193,8 @@ async def _process_job(
         except Exception:
             log.warning("could not report failure for job %s", job.id)
     finally:
+        if owned_executor is not None:
+            owned_executor.shutdown(wait=True, cancel_futures=False)
         stop.set()
         heartbeat.cancel()
         with suppress(asyncio.CancelledError, Exception):

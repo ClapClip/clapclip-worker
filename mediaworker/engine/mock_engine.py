@@ -31,6 +31,13 @@ class MockEngine(Engine):
         self._cfg = cfg
         self.task_type = task_type
 
+    def context_requirements(self, spec=None):
+        from ..memory import MemoryEstimate
+        return MemoryEstimate()
+
+    def spawn_context(self, spec=None):
+        return type(self)(self._cfg, self.task_type)
+
     def run(self, ctx: JobContext) -> RunResult:
         preferred = "image" if self.task_type in ("cutout", "enhance") else "target"
         src = ctx.inputs.get(preferred) or (

@@ -17,6 +17,7 @@ from .base import (
     RunResult,
     resolve_providers,
     session_options,
+    context_requirements,
 )
 
 log = logging.getLogger(__name__)
@@ -39,6 +40,21 @@ class CutoutEngine(Engine):
     @property
     def available_models(self) -> list[str]:
         return [self._cfg.cutout_model] if self._session is not None else []
+
+    @property
+    def execution_sessions(self):
+        return {self._cfg.cutout_model: self._session} if self._session is not None else {}
+
+    def context_spec(self, params):
+        return self._cfg.cutout_model
+
+    def context_requirements(self, spec=None):
+        return context_requirements(self._cfg, [self._cfg.cutout_models_dir / MODEL_FILES[self._cfg.cutout_model]], self.execution_sessions)
+
+    def spawn_context(self, spec=None):
+        engine = type(self)(self._cfg)
+        engine.load()
+        return engine
 
     def load(self) -> None:
         filename = MODEL_FILES.get(self._cfg.cutout_model)

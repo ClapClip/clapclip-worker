@@ -11,6 +11,26 @@ from collections.abc import Callable
 log = logging.getLogger(__name__)
 
 
+def context_requirements(cfg, paths, sessions):
+    """Conservative admission estimate, not a measured peak-memory guarantee."""
+    weights = sum(path.stat().st_size for path in set(paths))
+    from ..memory import MemoryEstimate
+    devices = set()
+    for session in sessions.values():
+        providers = session.get_providers()
+        if providers and providers[0] in {"DmlExecutionProvider", "CUDAExecutionProvider"}:
+            provider = providers[0]
+            options = session.get_provider_options() if hasattr(session, "get_provider_options") else {}
+            try:
+                device = int(options.get(provider, {}).get("device_id", "0"))
+            except (ValueError, TypeError):
+                device = None
+            devices.add((provider, device))
+    return MemoryEstimate(weights * 2, weights * 2 if devices else 0,
+                          max(256 * 1024**2, cfg.max_output_pixels * 24),
+                          256 * 1024**2 if devices else 0, tuple(sorted(devices, key=str)))
+
+
 @dataclass
 class JobContext:
     """Everything an engine needs to run one job, with inputs already fetched to

@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
-from .engine.base import Engine, RunResult
+from .engine.base import Engine, RunResult, context_requirements
 from .engine.faceswap_engine import FaceSwapEngine, SWAP_MODELS, _box_mask, _paste_face
 from .engine.enhance_portrait import _face_indices
 from .images import validate_image
@@ -26,8 +26,8 @@ def similarity(points, target):
 class LocalFaceSwap(Engine):
     task_type = "faceswap"
 
-    def __init__(self, cfg):
-        self.cfg, self.engine = cfg, FaceSwapEngine(cfg)
+    def __init__(self, cfg, model_keys=None):
+        self.cfg, self.engine = cfg, FaceSwapEngine(cfg, model_keys=model_keys, enable_gif=False)
         self.lock = threading.Lock()
 
     def load(self):
@@ -42,6 +42,27 @@ class LocalFaceSwap(Engine):
     @property
     def available_models(self):
         return self.engine.available_models
+
+    @property
+    def execution_sessions(self):
+        return {**self.engine.execution_sessions, "local_detector": self.detector}
+
+    def context_spec(self, params):
+        model = params.get("model", "hyperswap_256_b")
+        return (model, False) if isinstance(model, str) and model in self.available_models else None
+
+    def context_requirements(self, spec=None):
+        models = [spec[0]] if spec is not None else self.available_models
+        from .engine.faceswap_engine import IDENTITY_MODEL
+        return context_requirements(self.cfg, [*[self.engine._model_paths[model] for model in models],
+            self.cfg.faceswap_models_dir / IDENTITY_MODEL,
+            self.cfg.enhance_models_dir / "yoloface_8n.onnx"], self.execution_sessions)
+
+    def spawn_context(self, spec=None):
+        model = spec[0] if spec is not None else self.engine._context_model()
+        engine = type(self)(self.cfg, model_keys=[model])
+        engine.load()
+        return engine
 
     def align(self, image, size):
         from insightface.utils.face_align import arcface_dst

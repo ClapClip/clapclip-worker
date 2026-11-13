@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from .client import WorkerClient
-from .config import Config, MAX_CONCURRENCY
+from .config import Config, MAX_CONCURRENCY, MAX_DOWNLOAD_CONCURRENCY
 from .engine.base import Engine
 from .lifecycle import _process_job
 from .single_instance import FileLock, WorkerAlreadyRunning
@@ -40,11 +40,11 @@ async def _worker_loop(
     registry: dict[str, Engine],
     shutdown: asyncio.Event,
     capabilities: list[str] | None = None,
+    resources=None,
 ) -> None:
     if capabilities is None:
         capabilities = cfg.claim_capabilities or list(registry.keys())
     registry = {name: engine for name, engine in registry.items() if name in capabilities}
-    models = sorted({model for engine in registry.values() for model in engine.available_models})
     # Face restoration is an option on base enhance models too; "portrait"
     # alone cannot prove that a particular restorer is ready on this poller.
     claim_options = ({"face_models": list(getattr(registry.get("enhance"), "available_face_models", []))}
@@ -58,19 +58,35 @@ async def _worker_loop(
     unavailable_since = 0.0
     endpoint = urlsplit(cfg.api_base_url).hostname or "unknown"
     while not shutdown.is_set():
-        slot = acquire_worker_slot(cfg.runtime_dir)
+        try:
+            admission = resources.try_acquire(capabilities) if resources is not None else None
+            slot = admission.slot if admission is not None else acquire_worker_slot(cfg.runtime_dir, min(MAX_CONCURRENCY, cfg.concurrency)) if resources is None else None
+        except OSError:
+            log.warning("worker %d: local execution admission unavailable", idx)
+            await _sleep_or_stop(shutdown, min(2, cfg.poll_interval_s))
+            continue
         if slot is None:
-            await _sleep_or_stop(shutdown, 0.25)
+            await _sleep_or_stop(shutdown, 0.05)
             continue
         delay = cfg.poll_interval_s
         try:
+            selected = [admission.capability] if admission is not None else capabilities
+            active_registry = {admission.capability: admission.engine} if admission is not None else registry
+            selected_models = sorted({model for engine in active_registry.values() for model in engine.available_models})
+            selected_options = ({"face_models": list(getattr(active_registry.get("enhance"), "available_face_models", []))}
+                                if "enhance" in selected else {})
+            selected_media = getattr(active_registry.get("faceswap"), "available_media", None)
+            if "faceswap" in selected and selected_media is not None:
+                selected_options["faceswap_media"] = list(selected_media)
             try:
-                job = await client.claim(capabilities, models, **claim_options)
+                job = await client.claim(selected, selected_models, **selected_options)
             except Exception as exc:
                 if failures == 0:
                     unavailable_since = time.monotonic()
                 failures += 1
                 delay = _claim_retry_delay(cfg.poll_interval_s, failures)
+                if admission is not None:
+                    resources.defer_empty(admission.capability, delay)
                 log.warning(
                     "worker %d: claim failed (%s; endpoint=%s; failures=%d); next poll in %.1fs",
                     idx, _claim_error_summary(exc), endpoint, failures, delay,
@@ -84,15 +100,25 @@ async def _worker_loop(
                     )
                     failures = 0
                 if job is not None:
+                    if admission is not None:
+                        admission.claimed(job)
                     # Finish the attempt before releasing its host-wide slot.
                     try:
-                        await _process_job(cfg, client, registry, job)
+                        if resources is None:
+                            await _process_job(cfg, client, active_registry, job)
+                        else:
+                            await _process_job(cfg, client, active_registry, job, executor=resources.executor)
                     except Exception:
                         log.exception("worker %d: unexpected job error; continuing", idx)
                     continue
+                if admission is not None:
+                    resources.defer_empty(admission.capability, cfg.poll_interval_s)
         finally:
             # Cancellation, empty claims and errors all return ownership here.
-            slot.release()
+            if admission is not None:
+                admission.release()
+            else:
+                slot.release()
         await _sleep_or_stop(shutdown, delay)
     log.info("worker %d stopped", idx)
 
@@ -108,12 +134,13 @@ def acquire_worker_slot(runtime_dir, max_slots: int = MAX_CONCURRENCY) -> FileLo
     return None
 
 
-def worker_capability_groups(capabilities: list[str], concurrency: int) -> list[list[str]]:
+def worker_capability_groups(capabilities: list[str], concurrency: int,
+                             download_concurrency: int = MAX_DOWNLOAD_CONCURRENCY) -> list[list[str]]:
     """Keep the download API poller separate while sharing the host slot pool."""
     image_capabilities = [capability for capability in dict.fromkeys(capabilities) if capability != "download"]
     groups = [[*image_capabilities] for _ in range(max(1, concurrency))] if image_capabilities else []
     if "download" in capabilities:
-        groups.append(["download"])
+        groups.extend([["download"] for _ in range(min(MAX_DOWNLOAD_CONCURRENCY, max(1, download_concurrency), max(1, concurrency)))])
     return groups
 
 
@@ -125,11 +152,11 @@ async def _sleep_or_stop(shutdown: asyncio.Event, seconds: float) -> None:
 
 
 def runtime_capability_groups(cfg: Config, capabilities: list[str]) -> list[list[str]]:
-    """Separate queue protocols without exceeding one download poller per runtime."""
+    """Separate queue protocols; admission enforces host and per-type limits."""
     if cfg.claim_capabilities:
         if "download" in cfg.claim_capabilities:
             if set(cfg.claim_capabilities) != {"download"}:
                 raise SystemExit("WORKER_CLAIM_CAPABILITIES must isolate download from image tasks")
-            return [["download"]]
+            return [["download"] for _ in range(min(cfg.concurrency, cfg.download_concurrency))]
         return [list(cfg.claim_capabilities) for _ in range(cfg.concurrency)]
-    return worker_capability_groups(capabilities, cfg.concurrency)
+    return worker_capability_groups(capabilities, cfg.concurrency, cfg.download_concurrency)

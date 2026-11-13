@@ -36,7 +36,7 @@ MP4仅在本地实际probe确认H.264 8bit yuv420p、兼容profile/level、AAC-L
 
 媒体源文件、中间文件、结果及其上传均没有应用固定字节上限，格式列表无大小提示；旧DOWNLOAD_MAX_BYTES/MAX_DURATION/MAX_WIDTH/MAX_HEIGHT环境值不再消费，也不换成更大的隐藏上限。允许在任务bounds中合法收紧尺寸/时长，与本地旧环境策略无关。
 
-HTTP decoded元数据及HTTPError正文每响应<=8MiB；普通info/文本子进程stdout/stderr合计<=8MiB，section路径仅累计诊断stderr<=8MiB，二进制媒体stdout不计入文本上限；info JSON结果<=512KiB。section媒体以64KiB阻塞读写背压、最多8MiB前置元数据和同一deadline约束，无隐藏媒体总字节cap。只有HttpFD媒体/fragment流不受元数据读取上限约束，不依赖来源Content-Type；inspection proxy有界，进入媒体阶段才解除媒体隧道体积限制。SSRF、公网DNS/连接pinning、来源准入、认证、socket并发、超时、限速、租约/fencing/ACK、取消清理和共享三槽/下载一个poller保留。来源由受控native yt-dlp下载，ffmpeg只读本地文件或受控管道；超长/慢来源仍可超时，不承诺只向源站请求前300秒字节。
+HTTP decoded元数据及HTTPError正文每响应<=8MiB；普通info/文本子进程stdout/stderr合计<=8MiB，section路径仅累计诊断stderr<=8MiB，二进制媒体stdout不计入文本上限；info JSON结果<=512KiB。section媒体以64KiB阻塞读写背压、最多8MiB前置元数据和同一deadline约束，无隐藏媒体总字节cap。只有HttpFD媒体/fragment流不受元数据读取上限约束，不依赖来源Content-Type；inspection proxy有界，进入媒体阶段才解除媒体隧道体积限制。SSRF、公网DNS/连接pinning、来源准入、认证、socket并发、超时、限速、租约/fencing/ACK、取消清理和共享总三十槽/下载最多十个任务。来源由受控native yt-dlp下载，ffmpeg只读本地文件或受控管道；超长/慢来源仍可超时，不承诺只向源站请求前300秒字节。
 
 ## 发布边界
 

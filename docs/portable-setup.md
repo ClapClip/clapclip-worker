@@ -97,7 +97,7 @@ python3.13 scripts/setup-worker.py start --mode distributed --env-file .env.port
 
 Windows 同样使用 `setup-worker.ps1` 包装器传这些参数。已有安全配置也可以明确传 `--env-file /path/to/your.env`，但必须有独立的 `NODE_ID`、`NODE_RUNTIME_DIR` 和位于该目录内的 `NODE_TOKEN_FILE`。doctor 会检查缓存身份/API 是否冲突，绝不清空或改写缓存；它不会登录，因此不能确认密码或节点是否已被撤销。
 
-手动 `start --mode distributed` 才会登录、登记并领取生产任务；不要把它当离线验收命令。启动只注册实际加载的能力，再与服务端返回的授权能力取交集。无可用且获授权的能力就停止，不能通过修改本机能力绕过服务端策略。保留三槽、下载最多一个、租约/fencing 及 API 协议。
+手动 `start --mode distributed` 才会登录、登记并领取生产任务；不要把它当离线验收命令。启动只注册实际加载的能力，再与服务端返回的授权能力取交集。无可用且获授权的能力就停止，不能通过修改本机能力绕过服务端策略。共享总三十槽、下载最多十个；保留租约/fencing 及 API 协议。
 
 | 已观察到的认证错误 | 处理 |
 | --- | --- |

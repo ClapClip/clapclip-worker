@@ -6,7 +6,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-MAX_CONCURRENCY = 3
+MAX_CONCURRENCY = 30
+MAX_DOWNLOAD_CONCURRENCY = 10
 
 
 def _split(value: str | None) -> list[str]:
@@ -83,6 +84,8 @@ class Config:
     node_token_file: Path = Path.home() / ".mediaworker" / "node-token.json"
     runtime_dir: Path = Path.home() / ".mediaworker"
     download_api_prefix: str = "/api/worker/download"
+    ai_contexts: int = 2
+    download_concurrency: int = MAX_DOWNLOAD_CONCURRENCY
 
     @classmethod
     def from_env(cls, load_env: bool = True) -> "Config":
@@ -110,7 +113,7 @@ class Config:
             trust_tier=os.environ.get("TRUST_TIER", "trusted"),
             concurrency=min(
                 MAX_CONCURRENCY,
-                max(1, int(os.environ.get("CONCURRENCY", "1"))),
+                max(1, int(os.environ.get("CONCURRENCY", str(MAX_CONCURRENCY)))),
             ),
             poll_interval_ms=max(100, int(os.environ.get("POLL_INTERVAL_MS", "2000"))),
             claim_timeout_s=max(1.0, float(os.environ.get("CLAIM_TIMEOUT_S", "30"))),
@@ -168,6 +171,8 @@ class Config:
             node_token_file=_path(os.environ.get("NODE_TOKEN_FILE"), home / "node-token.json"),
             runtime_dir=_path(os.environ.get("NODE_RUNTIME_DIR"), home),
             download_api_prefix=os.environ.get("WORKER_DOWNLOAD_API_PREFIX", "/api/worker/download").rstrip("/"),
+            ai_contexts=min(MAX_CONCURRENCY, max(1, int(os.environ.get("AI_CONTEXTS", "2")))),
+            download_concurrency=min(MAX_DOWNLOAD_CONCURRENCY, max(1, int(os.environ.get("DOWNLOAD_CONCURRENCY", "10")))),
         )
 
     @property

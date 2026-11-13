@@ -50,9 +50,12 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.cfg.node_token = "offline"
         self.cfg.faceswap_model_repository = "example/models"
 
-    def test_concurrency_is_limited_to_three_jobs(self):
-        with patch.dict(os.environ, {"CONCURRENCY": "9"}):
-            self.assertEqual(Config.from_env(load_env=False).concurrency, 3)
+    def test_concurrency_is_limited_to_thirty_jobs(self):
+        with patch.dict(os.environ, {"CONCURRENCY": "99", "AI_CONTEXTS":"99", "DOWNLOAD_CONCURRENCY":"99"}):
+            cfg=Config.from_env(load_env=False)
+            self.assertEqual((cfg.concurrency,cfg.ai_contexts,cfg.download_concurrency),(30,30,10))
+        with patch.dict(os.environ, {"CONCURRENCY": "3"}):
+            self.assertEqual(Config.from_env(load_env=False).concurrency,3)
 
     def test_default_capabilities_include_cutout_and_enhance(self):
         with patch.dict(os.environ, {"CAPABILITIES": ""}):
@@ -61,15 +64,15 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(cfg.claim_capabilities)
         self.assertEqual(cfg.cutout_model, "isnet-general-use")
 
-    def test_shared_runtime_limits_all_worker_processes_to_three_active_jobs(self):
+    def test_shared_runtime_limits_all_worker_processes_to_thirty_active_jobs(self):
         runtime_dir = Path(self.tmp.name) / "runtime"
-        slots = [scheduling.acquire_worker_slot(runtime_dir) for _ in range(4)]
-        self.assertTrue(all(slots[:3]))
-        self.assertIsNone(slots[3])
+        slots = [scheduling.acquire_worker_slot(runtime_dir) for _ in range(31)]
+        self.assertTrue(all(slots[:30]))
+        self.assertIsNone(slots[30])
         slots[1].release()
         replacement = scheduling.acquire_worker_slot(runtime_dir)
         self.assertIsNotNone(replacement)
-        for slot in (*slots[:3], replacement):
+        for slot in (*slots[:30], replacement):
             if slot:
                 slot.release()
 
@@ -81,7 +84,7 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
             ["faceswap", "cutout", "enhance"],
             ["faceswap", "cutout", "enhance"],
             ["faceswap", "cutout", "enhance"],
-            ["download"],
+            ["download"], ["download"], ["download"],
         ])
 
     async def test_workers_reuse_the_shared_token_rotated_by_another_runtime(self):

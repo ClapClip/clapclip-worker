@@ -20,6 +20,7 @@ class UnifiedRuntimeTests(unittest.TestCase):
         self.cfg.capabilities = ['faceswap', 'cutout', 'enhance', 'download']
         self.cfg.claim_capabilities = ['faceswap', 'cutout', 'enhance']
         self.cfg.concurrency = 3
+        self.cfg.download_concurrency = 1
 
     def test_retired_commands_fail_before_loading_credentials_or_engines(self):
         for command in (['download-worker'], ['download-server'], ['selftest']):

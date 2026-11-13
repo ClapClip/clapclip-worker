@@ -102,7 +102,7 @@ class GateTests(unittest.IsolatedAsyncioTestCase):
                 async def complete_in_flight(*_):
                     accepted.set()
                     await finish.wait()
-                cfg = SimpleNamespace(runtime_dir=root, api_base_url="http://localhost", poll_interval_s=.01)
+                cfg = SimpleNamespace(runtime_dir=root, api_base_url="http://localhost", poll_interval_s=.01, concurrency=30)
                 engine = SimpleNamespace(available_models=["synthetic"])
                 with patch.object(scheduling, "acquire_worker_slot", return_value=slot), patch.object(scheduling, "_process_job", side_effect=complete_in_flight):
                     poller = asyncio.create_task(scheduling._worker_loop(0, cfg, client, {"cutout": engine}, shutdown, ["cutout"]))

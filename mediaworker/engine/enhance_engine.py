@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import lcm
 from pathlib import Path
 from threading import Lock
@@ -13,7 +13,7 @@ from PIL import Image, ImageOps
 
 from ..config import Config
 from ..images import validate_image
-from .base import Engine, JobContext, RunResult, session_options
+from .base import Engine, JobContext, RunResult, session_options, context_requirements
 from .enhance_portrait import restore_portraits
 
 log = logging.getLogger(__name__)
@@ -243,6 +243,43 @@ class EnhanceEngine(Engine):
     def available_face_models(self) -> list[str]:
         """Only loaded restorers with a ready detector can accept face jobs."""
         return sorted(self._faces) if self._detector is not None else []
+
+    @property
+    def execution_sessions(self):
+        sessions = {f"{key}:{i}": model.session for key, values in self._models.items()
+                    for i, (_, model) in enumerate(values)}
+        sessions.update({"face:"+key: model.session for key, model in self._faces.items()})
+        if self._detector is not None:
+            sessions["detector"] = self._detector.session
+        return sessions
+
+    def context_spec(self, params):
+        model, face = params.get("model", "standard"), params.get("face", "off")
+        if (not isinstance(model, str) or model not in self.available_models or not isinstance(face, str)
+                or face not in {"off", *self.available_face_models} or model == "portrait" and face == "off"):
+            return None
+        return model, face
+
+    def _context_config(self, spec=None):
+        # One ready core model per extra context, not another entire registry.
+        model, face = spec if spec is not None else (next(iter(self._models), "portrait"), "off")
+        if model not in self.available_models or face not in {"off", *self.available_face_models}:
+            raise ValueError("unavailable context profile")
+        return replace(self._cfg, enhance_models=[model] if model != "portrait" else [],
+                       enhance_face_models=[] if face == "off" else [face])
+
+    def context_requirements(self, spec=None):
+        cfg = self._context_config(spec) if spec is not None else replace(self._cfg,enhance_models=list(self._models),enhance_face_models=list(self._faces))
+        paths = [cfg.enhance_models_dir / spec.filename for key in cfg.enhance_models for spec in MODEL_SPECS[key]]
+        if cfg.enhance_face_models:
+            paths += [cfg.enhance_models_dir / "yoloface_8n.onnx"]
+            paths += [cfg.enhance_models_dir / FACE_FILES[key] for key in cfg.enhance_face_models]
+        return context_requirements(cfg, paths, self.execution_sessions)
+
+    def spawn_context(self, spec=None):
+        engine = type(self)(self._context_config(spec))
+        engine.load()
+        return engine
 
     def load(self) -> None:
         if self._models or self._faces:

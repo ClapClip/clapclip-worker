@@ -6,7 +6,7 @@
 python -m mediaworker run --all-capabilities
 ```
 
-在 `.env` 中启用 `CAPABILITIES=faceswap,cutout,enhance,download`，使用同一个 API、节点身份和认证配置。三个 AI poller 和一个下载 poller 共享最多三个主机执行槽，下载同时最多执行一个任务。无需单独的下载进程、HTTP 服务或 API 密钥。后台常驻使用统一监督器，见[部署说明](distributed-mode.md)。
+在 `.env` 中启用 `CAPABILITIES=faceswap,cutout,enhance,download`，使用同一个 API、节点身份和认证配置。默认三十个 AI poller 和十个下载 poller 共享最多三十个主机执行槽，下载同时最多执行十个任务。无需单独的下载进程、HTTP 服务或 API 密钥。后台常驻使用统一监督器，见[部署说明](distributed-mode.md)。
 
 本地模式直接在工作台的视频下载页提交链接，安装与启动见[本地部署](local-mode.md)。它复用相同的下载引擎及来源检查，不连接私有队列。
 

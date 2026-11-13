@@ -65,14 +65,12 @@ class EnhanceIntegrationTests(unittest.TestCase):
         network.assert_not_called()
 
     def test_registry_loads_enhance_and_filters_an_unavailable_engine(self):
-        engine = Mock(task_type="enhance")
+        engine = Mock(task_type="enhance", available_models=list(self.cfg.enhance_models))
         factory = Mock(return_value=engine)
-        with patch.dict(
-            "sys.modules",
-            {"mediaworker.engine.enhance_engine": SimpleNamespace(EnhanceEngine=factory)},
-        ):
+        with patch("mediaworker.model_process.ModelProcess", factory):
             self.assertEqual(build_registry(self.cfg, ["enhance"]), {"enhance": engine})
-            factory.assert_called_once_with(self.cfg)
+            factory.assert_called_once_with(self.cfg, "enhance")
+            self.assertEqual(engine.available_models, self.cfg.enhance_models)
             engine.load.assert_called_once_with()
             engine.load.side_effect = RuntimeError("GPU unavailable")
             with self.assertLogs("mediaworker.engine.registry", level="ERROR"):

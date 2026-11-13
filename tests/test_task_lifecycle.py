@@ -152,7 +152,7 @@ class LifecycleContractTests(unittest.IsolatedAsyncioTestCase):
                 {'faceswap': FixtureEngine('faceswap', 'image/jpeg')}, shutdown)
         held = []
         try:
-            for _ in range(3):
+            for _ in range(30):
                 slot = scheduling.acquire_worker_slot(self.cfg.runtime_dir)
                 self.assertIsNotNone(slot)
                 held.append(slot)
@@ -161,10 +161,10 @@ class LifecycleContractTests(unittest.IsolatedAsyncioTestCase):
             for slot in held:
                 slot.release()
 
-    def test_download_group_is_one_even_with_three_configured_workers(self):
+    def test_download_groups_respect_configured_task_and_download_limits(self):
         self.cfg.claim_capabilities = ['download']
         self.cfg.concurrency = 3
-        self.assertEqual(scheduling.runtime_capability_groups(self.cfg, ['download']), [['download']])
+        self.assertEqual(scheduling.runtime_capability_groups(self.cfg, ['download']), [['download']]*3)
         self.cfg.claim_capabilities = ['faceswap', 'download']
         with self.assertRaises(SystemExit):
             scheduling.runtime_capability_groups(self.cfg, ['faceswap', 'download'])

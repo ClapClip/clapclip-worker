@@ -77,7 +77,7 @@ def write_example(path: Path, node: str, *, local: bool) -> None:
     lines = ["# Generated portable configuration; keep private. Existing files are never replaced.",
              f"NODE_ID={node}", f"NODE_RUNTIME_DIR={state}", f"NODE_TOKEN_FILE={state}/node-token.json",
              f"WORK_DIR={state}/work", f"LOG_FILE={state}/logs/worker.log",
-             "CAPABILITIES=" + ("faceswap,cutout,enhance,download" if sys.platform == "darwin" else "faceswap,cutout,download"), "CONCURRENCY=3", "WORKER_AUTO_UPDATE=false",
+             "CAPABILITIES=" + ("faceswap,cutout,enhance,download" if sys.platform == "darwin" else "faceswap,cutout,download"), "CONCURRENCY=30", "AI_CONTEXTS=2", "DOWNLOAD_CONCURRENCY=10", "WORKER_AUTO_UPDATE=false",
              "FACESWAP_MODEL_AUTO_DOWNLOAD=false", "CUTOUT_MODEL_AUTO_DOWNLOAD=false"]
     if not local:
         lines += ["# Central Web-ClapClip backend manages all website queues.", "API_BASE_URL=https://www.clapclip.net",
@@ -153,7 +153,7 @@ def configuration(env_file: Path | None):
         # Preserve OS/PATH settings, but never accidentally inherit another
         # Worker's identity, credentials, model paths or mock/update flags.
         prefixes = ("WORKER_", "NODE_", "FACESWAP_", "CUTOUT_", "ENHANCE_", "DOWNLOAD_", "ONNX_", "MEDIAWORKER_", "MAX_")
-        names = {"API_BASE_URL", "GITHUB_TOKEN", "MODELS_DIR", "CAPABILITIES", "CONCURRENCY", "LOG_FILE", "WORK_DIR", "TRUST_TIER", "POLL_INTERVAL_MS", "CLAIM_TIMEOUT_S"}
+        names = {"API_BASE_URL", "GITHUB_TOKEN", "MODELS_DIR", "CAPABILITIES", "CONCURRENCY", "AI_CONTEXTS", "LOG_FILE", "WORK_DIR", "TRUST_TIER", "POLL_INTERVAL_MS", "CLAIM_TIMEOUT_S"}
         for key in list(os.environ):
             if key in names or key.startswith(prefixes):
                 del os.environ[key]

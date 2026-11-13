@@ -12,6 +12,7 @@ from .config import Config
 from .engine import build_registry
 from .keepawake import KeepAwake
 from .scheduling import _worker_loop, runtime_capability_groups
+from .execution import ExecutionResources
 
 log = logging.getLogger(__name__)
 
@@ -81,28 +82,38 @@ async def run_forever(cfg: Config, *, require_all_engines: bool = False,
     log.info("node %s starting (tier=%s, concurrency=%d, claims=%s)",
              cfg.node_id, cfg.trust_tier, cfg.concurrency, sorted(registry))
 
-    with KeepAwake():
-        async with WorkerClient(cfg) as client:
-            if poll_observer is not None:
-                client.poll_observer = poll_observer
-            groups = runtime_capability_groups(cfg, list(registry))
-            workers = [
-                asyncio.create_task(_worker_loop(i, cfg, client, registry, shutdown, group))
-                for i, group in enumerate(groups)
-            ]
-            updater = None
-            if cfg.auto_update:
-                from .updater import watch_for_updates
+    resources = ExecutionResources(cfg, registry)
+    log.info("execution capacity task_limit=%d download_limit=%d ai_context_limit=%d (lazy, memory admitted)",
+             resources.limit, resources.download_limit, resources.context_limit)
+    workers = []
+    try:
+        with KeepAwake():
+            async with WorkerClient(cfg) as client:
+                if poll_observer is not None:
+                    client.poll_observer = poll_observer
+                groups = runtime_capability_groups(cfg, list(registry))
+                workers = [
+                    asyncio.create_task(_worker_loop(i, cfg, client, registry, shutdown, group, resources=resources))
+                    for i, group in enumerate(groups)
+                ]
+                updater = None
+                if cfg.auto_update:
+                    from .updater import watch_for_updates
 
-                updater = asyncio.create_task(watch_for_updates(cfg, shutdown))
-                log.info(
-                    "automatic updates enabled (%s/%s every %.0fs)",
-                    cfg.auto_update_remote,
-                    cfg.auto_update_branch,
-                    cfg.auto_update_interval_s,
-                )
-            await asyncio.gather(*workers)
-            updated = await updater if updater else False
+                    updater = asyncio.create_task(watch_for_updates(cfg, shutdown))
+                    log.info(
+                        "automatic updates enabled (%s/%s every %.0fs)",
+                        cfg.auto_update_remote,
+                        cfg.auto_update_branch,
+                        cfg.auto_update_interval_s,
+                    )
+                await asyncio.gather(*workers)
+                updated = await updater if updater else False
+    finally:
+        # Never dispose native contexts while a task's execution future owns one.
+        shutdown.set()
+        await asyncio.gather(*workers, return_exceptions=True)
+        await asyncio.to_thread(resources.close)
     log.info("node %s stopped cleanly", cfg.node_id)
     if updated:
         from .updater import RESTART_FOR_UPDATE

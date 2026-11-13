@@ -2,9 +2,9 @@
 
 ## 独立本地入口
 
-`local` 是不经过 runner/client 的独立入口：`local_web.Workbench` 持有本地任务、三线程执行池、取消事件和下载互斥，复用 `JobContext`、业务引擎及共享 OS 执行槽。HTTP 服务固定 loopback，使用会话令牌与 Host/Origin 检查，不读取默认 `.env`、不认证或 claim。`local_faceswap.LocalFaceSwap` 只为此入口增加整图五点对齐和融合，不改变分布式换脸的原生裁剪输入协议。静态网页随 wheel 打包；两种部署配置与平台限制见 [本地模式](local-mode.md)。
+`local` 是不经过 runner/client 的独立入口：`local_web.Workbench` 持有本地任务、按可运行任务分派的有界执行池、取消事件和下载配额，复用 `JobContext`、业务引擎及共享 OS 执行槽。HTTP 服务固定 loopback，使用会话令牌与 Host/Origin 检查，不读取默认 `.env`、不认证或 claim。`local_faceswap.LocalFaceSwap` 只为此入口增加整图五点对齐和融合，不改变分布式换脸的原生裁剪输入协议。静态网页随 wheel 打包；两种部署配置与平台限制见 [本地模式](local-mode.md)。
 
-MediaWorker 在 `main` 上统一维护。Windows 可用 Python 3.13、DirectML 和下载依赖运行一个业务实例，命令为 `run --all-capabilities`；该入口清除旧的 AI-only claim 子集，并要求配置的每个引擎成功加载后才认证上线。一个实例包含三个 AI poller 和一个下载 poller，共用最多三个 OS 文件锁执行槽，下载同时最多一个任务。旧版 NCNN 放大、独立下载 HTTP 服务及拆分下载进程入口已移除。模型输入、融合、任务租约与媒体准入策略均不变。
+MediaWorker 在 `main` 上统一维护。Windows 可用 Python 3.13、DirectML 和下载依赖运行一个业务实例，命令为 `run --all-capabilities`；该入口清除旧的 AI-only claim 子集，并要求配置的每个引擎成功加载后才认证上线。默认一个实例包含三十个动态选择已就绪单项 AI 能力的 poller 和十个下载 poller，共用最多三十个 OS 文件锁执行槽，下载同时最多十个任务。旧版 NCNN 放大、独立下载 HTTP 服务及拆分下载进程入口已移除。模型输入、融合、任务租约与媒体准入策略均不变。
 
 ```mermaid
 flowchart LR
@@ -45,7 +45,7 @@ flowchart LR
 - 下载metadata的JSON和媒体文件走同一上传与ACK路径，保留 `application/json` / `video/mp4` / `video/webm` / `audio/mpeg` 及当前占位尺寸约定。未修改服务端API或JSON字段。
 - heartbeat丢失或服务端fencing为stale时，不上传/提交过期结果；上传前再次确认租约。取消时等待同步线程停止写入后才清理attempt目录；正常退出继续完成在途任务。
 - claim遭遇不确定响应时不立即重放；下次轮询是新请求。当前认证401刷新和既有租约/result-key约束下的ACK重试策略原样保留，没有新增重试或擅自把ACK视为可幂等重放。服务端幂等保障变化时应先审阅client契约。
-- 所有 poller 共用最多三槽，下载只有一个 poller。仅保留统一分布式运行入口和本地工作台；监督器对旧下载进程保留只读清点能力，不能再启动它。
+- 所有 poller 共用最多三十槽，下载专项最多十槽。仅保留统一分布式运行入口和本地工作台；监督器对旧下载进程保留只读清点能力，不能再启动它。
 
 ## 接入能力
 
@@ -57,7 +57,7 @@ flowchart LR
 
 跨平台部署入口为 `scripts/setup-worker.py`，POSIX/PowerShell 包装器只负责找到普通 Python 3.13。共享 `deployment.py` 管理独立 portable venv、生成不覆盖已有文件的本机示例配置、离线 doctor 及显式前台启动。安装/诊断不调用模型同步、节点认证或 claim，不设置后台/自启。doctor 的依赖、文件存在、模型加载、授权配置和运行状态分开报告；显式分布式配置只核对其选定缓存的节点/API，不更改缓存。
 
-portable 启动在本机 OS 锁内按实际 provider/模型/工具筛选能力。`runner.run_forever(available_only=True)` 仅供该入口选择：在认证前按成功加载的 registry 注册，认证后再次与服务端授权取交集；空交集停止。既有 `run --all-capabilities` 的严格门控不变，本地工作台对显式禁用的能力不加载。三槽、下载最多一个、租约/fencing 和处理算法不变。
+portable 启动在本机 OS 锁内按实际 provider/模型/工具筛选能力。`runner.run_forever(available_only=True)` 仅供该入口选择：在认证前按成功加载的 registry 注册，认证后再次与服务端授权取交集；空交集停止。既有 `run --all-capabilities` 的严格门控不变，本地工作台对显式禁用的能力不加载。共享总上限三十槽、下载专项最多十槽；租约/fencing 和处理算法不变。
 
 活跃进程通常已加载runner/client/引擎模块，但一些引擎仍有惰性库导入，updater也可能读取新源码。因此先复制已跟踪文件到忽略的 `build/` 目录，在该目录运行已安装解释器（cwd优先于editable install）。隔离目录不复制 `.env`、token、模型或用户媒体；临时测试显式关闭dotenv加载。
 
@@ -76,3 +76,14 @@ portable 启动在本机 OS 锁内按实际 provider/模型/工具筛选能力�
 下载未知错误按固定异常类型映射为 INVALID_SOURCE_JSON、NETWORK_TIMEOUT、NETWORK_PROTOCOL_ERROR、NETWORK_ERROR、OPERATION_TIMEOUT、LOCAL_IO_ERROR、INVALID_DATA、RUNTIME_ERROR 或 UNKNOWN_FAILURE；不复制异常原文或任意类名。公开错误仍沿用既有安全码，类别经固定白名单进入日志及下载失败元数据。
 
 下载 fail ACK 可附带固定白名单的 `phase` 与 `diagnostic_code`，分别取自本次 `FailureReport`；未知值收敛为 `unknown` / `UNKNOWN_FAILURE`，公开 `error` 保持原值。仅已绑定的下载队列携带这些字段，AI 与未提供元数据的旧调用维持原 payload。出口拒绝的观测集合不当作最终失败原因；不转发 URL、headers、Cookie 或来源 stderr，也不因旧后台拒绝字段而剥离重发 ACK。旧任务不会回填或重放。
+
+
+## 并发准入与独立模型上下文
+
+`execution.py` 在领取前预留就绪单能力上下文、预计工作区与主机文件锁；空领取和不确定领取也归还票。业务 coordinator 仍只有一个，负责认证、领取、租约、上传和 ACK。每个 AI 上下文由 `model_process.py` 持有一个长期本地模型子进程和完整独立 session 子图；子进程不认证、不领取任务，IPC 仅传白名单非秘密模型配置、受控参数和本 attempt 的本地文件路径，不传账户、令牌、Cookie 或整个父进程环境。同一 session 保留原单 Run 安全锁，不用同进程多 DML session 并发绕过已观察到的运行库崩溃。模型构建与资源查询使用独立控制 executor，不能让等待上下文的任务堵住认证或下载控制。`AI_CONTEXTS` 默认 2、上限 30，同时受总任务数和全池资源账本限制。额外上下文按已接受任务的规范化模型/恢复模式按需构建，只广告实际就绪子集；预算或总上下文数不足时按 LRU 回收闲置额外上下文。
+
+`memory.py` 区分正在构建的 resident 预留、已物化会话与尚未分配的工作区。仅在无构建票和工作区票时刷新预算；旧 epoch 的 resident 估值不能在淘汰时虚增新预算。系统可用 RAM 已含模型子进程占用；父进程的 DXGI usage 不含它们，因此所有子进程 GPU resident 预留跨 epoch 持续累计，确认对应子进程实际退出后才退款。AI 按模型文件、进程开销与最大画布作保守估算，下载每次预留 256MiB 的进程/流缓冲工作区；这是准入估算，不是实际峰值保证。CPU-only 会话只按 RAM，DirectML 按实际 session 的 device_id 查询 DXGI 进程预算。未知 GPU 预算保守等待额外上下文；CUDA 设备映射的预算仍未知，不声称通用多 GPU 峰值已验。
+
+上下文与工作区仅在真实同步 Run 返回后归还，重复 asyncio 取消不能提前复用 native session 或删除 attempt。取消、失租、崩溃时先确认自有模型进程和读线程退出；Windows Job 在父进程死亡时终止模型子进程，监督器同时清点正常子族和无主模型进程。未确认退出时保留调用、预算与任务槽。死亡上下文只为未来领取重建，不重跑已接受任务。OS 总任务槽和下载专项槽一直持有到上传、终态 ACK 与清理结束；因此少量 AI 上下文配合 I/O 重叠仍可达到三十个在途任务。本地入口先挑可执行队列项再提交线程，下载配额满不会阻塞有上下文的 AI。
+
+升级保持原 slots/slot-{i} 命名空间，扩展到 0..29，并新增 download-slots/slot-{i} 的 0..9 专项锁。旧版本没有下载专项锁，禁止新旧业务族并存；切换必须先持住全部三十总槽与十个下载槽、排空旧任务到 ACK、确认旧族退出，再验证新族就绪后准入。现役显式 CONCURRENCY=3 的部署不会仅因默认变化自动变成 30，发布切换须单独核对实际配置。生成模型的多会话机制验证不等于私有业务模型的双份加载或十倍吞吐已验。

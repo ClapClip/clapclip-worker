@@ -105,7 +105,7 @@ class LocalWebTests(unittest.TestCase):
         self.assertFalse(list(self.app.root.iterdir()))
 
     def test_shared_slots_and_queued_cancellation(self):
-        locks = [FileLock(self.cfg.runtime_dir / "slots" / f"slot-{i}.lock").acquire() for i in range(3)]
+        locks = [FileLock(self.cfg.runtime_dir / "slots" / f"slot-{i}.lock").acquire() for i in range(30)]
         try:
             identifier = self.submit()
             time.sleep(.1)
@@ -119,6 +119,7 @@ class LocalWebTests(unittest.TestCase):
 
     def test_download_only_accepts_server_owned_format(self):
         self.app.engines["download"] = FakeEngine()
+        self.app.resources.register("download", self.app.engines["download"])
         self.app.states["download"] = "ready"
         with self.assertRaises(ValueError):
             self.app.submit({"tool": "download", "params": {"operation": "download", "infoId": "not-owned", "option": {"path": "C:/secret"}}})
@@ -138,6 +139,7 @@ class LocalWebTests(unittest.TestCase):
                 path.write_bytes(b"fixture")
                 return RunResult(path, 16, 16, "video/mp4")
         self.app.engines["download"], self.app.states["download"] = Download(), "ready"
+        self.app.resources.register("download", self.app.engines["download"])
         data = self.app.submit({"tool": "download", "params": {"operation": "info", "url": "https://example.com/video"}})
         metadata = self.wait(data["id"])
         self.assertNotIn("options", metadata["media"])
@@ -156,6 +158,7 @@ class LocalWebTests(unittest.TestCase):
         engine.available_models = ["portrait"]
         engine._faces = {"gfpgan": object()}
         self.app.engines["enhance"], self.app.states["enhance"] = engine, "ready"
+        self.app.resources.register("enhance", engine)
         self.assertEqual(self.app.state()["tools"]["enhance"]["state"], "unavailable")
         engine._detector = object()
         state = self.app.state()

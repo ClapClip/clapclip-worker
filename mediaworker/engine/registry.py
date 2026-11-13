@@ -13,21 +13,18 @@ EngineFactory = Callable[[Config], Engine]
 
 
 def _faceswap(cfg: Config) -> Engine:
-    from .faceswap_engine import FaceSwapEngine
-
-    return FaceSwapEngine(cfg)
+    from ..model_process import ModelProcess
+    return ModelProcess(cfg, "faceswap")
 
 
 def _cutout(cfg: Config) -> Engine:
-    from .cutout_engine import CutoutEngine
-
-    return CutoutEngine(cfg)
+    from ..model_process import ModelProcess
+    return ModelProcess(cfg, "cutout")
 
 
 def _enhance(cfg: Config) -> Engine:
-    from .enhance_engine import EnhanceEngine
-
-    return EnhanceEngine(cfg)
+    from ..model_process import ModelProcess
+    return ModelProcess(cfg, "enhance")
 
 
 def _download(cfg: Config) -> Engine:

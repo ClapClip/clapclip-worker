@@ -26,7 +26,7 @@ def configuration(root: Path, value: dict, login: Login):
         cfg.cognito_user_pool_id, cfg.cognito_client_id = bootstrap.pool, bootstrap.client
         cfg.cognito_region = bootstrap.region
         cfg.capabilities, cfg.claim_capabilities = value["capabilities"], None
-        cfg.concurrency = 3
+        cfg.concurrency = 30
         data = data_root(root)
         cfg.runtime_dir, cfg.node_token_file = data / "node", data / "node/node-token.json"
         models = inside(data / "models", value["model_set"])
